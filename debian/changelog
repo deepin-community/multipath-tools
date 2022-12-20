@@ -1,0 +1,1152 @@
+multipath-tools (0.8.5-deepin1) unstable; urgency=medium
+
+  * Rebuild
+
+ -- Deepin Packages Builder <packages@deepin.org>  Mon, 14 Nov 2022 17:47:58 +0800
+
+multipath-tools (0.8.5-2) unstable; urgency=medium
+
+  * [373f5c5] Fix bashism in script kpartx/kpartx_id.
+    Thanks to Julien Cristau (Closes: #987669)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 28 Apr 2021 22:40:55 +0530
+
+multipath-tools (0.8.5-1) unstable; urgency=medium
+
+  [ Ritesh Raj Sarraf ]
+  * [9e88f52] Add README.alua to docs section
+
+  [ Christian Ehrhardt ]
+  * [7860503] d/t/tgtbasedmpaths: reduce memory pressure avoiding OOM
+    triggered false positives
+
+  [ Chris Hofstaedtler ]
+  * [859ade1] Update upstream git (and our debian/watch) URL
+  * [bdc291a] New upstream version 0.8.5
+  * [83060d2] Rebase patches
+  * [cb467ba] multipath.rules: Avoid usrmerge paths (Closes: #973853)
+  * [61df246] kpartx: update package description (Closes: #690995)
+  * [3262269] Drop 0001-Blacklist-cciss-devices.patch.
+    Upstream has switched to an exclusive list of devices by default.
+    Only sd, dasd and nvme devices are seen by multipath now. This makes
+    the cciss exclusion obsolete.
+  * [602298a] Follow README.md rename
+  * [2018daf] Remove obsolete override for lintian tag
+    init.d-script-does-not-implement-optional-option
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Wed, 23 Dec 2020 23:53:53 +0000
+
+multipath-tools (0.8.4-4) unstable; urgency=medium
+
+  * [637efc8] Remove overly complicated INSTALL_PROGRAM setup.
+    Thanks to Simon McVittie <smcv@debian.org> (Closes: #968528)
+  * [d793f77] kpartx, multipath-tools: remove pre-oldstable upgrade code
+  * [aa2fab9] d/*: trim trailing whitespace
+  * [1657612] multipath-tools, multipath-tools-boot: update lintian overrides
+  * [825c1e2] debian/po/de.po: recode to UTF-8
+  * [ce008ac] Allow (partial) parallel builds
+  * [6383d2d] d/control: remove relationships satisfied in oldstable
+  * [bf0e585] d/control: remove version constraints satisfied in oldstable
+  * [67cff60] Declare debhelper compat version using debhelper-compat
+  * [6992798] Apply to-be-upstream patch for parallel builds.
+    Thanks to Christian Hesse <mail@eworm.de>
+  * [058d79f] Use to-be-upstream patch for json-c update
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 30 Aug 2020 01:14:10 +0000
+
+multipath-tools (0.8.4-3) unstable; urgency=medium
+
+  * [c8c0700] Fix build with newer json-c.
+    Thanks to Gianfranco Costamagna <locutusofborg@debian.org> (Closes: #966597)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Fri, 31 Jul 2020 09:31:38 +0000
+
+multipath-tools (0.8.4-2) unstable; urgency=medium
+
+  * [b270b02] Fix FTBFS with gcc-10 (Closes: #957568)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Wed, 22 Jul 2020 22:23:13 +0000
+
+multipath-tools (0.8.4-1) unstable; urgency=medium
+
+  * [f4b2af2] kpartx: use correct path to partx in udev rule (Closes: #959727)
+  * [30806f2] New upstream version 0.8.4 (Closes: #943383)
+  * [ad742ee] Update patch 0009-hardened-build-flags
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 21 Jun 2020 16:23:30 +0000
+
+multipath-tools (0.8.3-1) unstable; urgency=medium
+
+  * [6b91b76] New upstream version 0.8.3
+  * [bd42030] Refresh patches
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 08 Jan 2020 21:45:44 +0530
+
+multipath-tools (0.7.9-3) unstable; urgency=medium
+
+  * [51a7724] Reliably extract the running systemd version
+    (Closes: #924860)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 18 Mar 2019 20:56:38 +0530
+
+multipath-tools (0.7.9-2) unstable; urgency=medium
+
+  * [c2f0c23] Enable proper cross build.
+    Thanks to Helmut Grohne (Closes: #916521)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 27 Dec 2018 19:54:40 +0530
+
+multipath-tools (0.7.9-1) unstable; urgency=medium
+
+  * [c3bbe11] Fix installation of incorrect file to del-part-nodes.rules.
+    Thanks to Jean-François Remy (Closes: #914158)
+  * [9421efd] Add filter config to exclude file .gitignore
+  * [16da907] New upstream version 0.7.9
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 20 Nov 2018 12:54:25 +0530
+
+multipath-tools (0.7.8-2) unstable; urgency=medium
+
+  * [8b8f73c] Update debian/gbp.conf
+  * Upload to Unstable
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 26 Oct 2018 19:20:27 +0530
+
+multipath-tools (0.7.8-1) experimental; urgency=medium
+
+  [ Ritesh Raj Sarraf ]
+  * [1dea65d] New upstream version 0.7.8 (Closes: #909926)
+  * [2d9b752] Refresh patches and drop some that are now applied upstream
+  * [63ac09f] Drop RADOS support
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 23 Oct 2018 19:45:00 +0530
+
+multipath-tools (0.7.7-3) unstable; urgency=medium
+
+  [ Chris Hofstaedtler ]
+  * [fc0938c] Synchronize loading of kernel modules
+    dm-round-robin is auto-loaded by the kernel if needed, but the
+    scsi_dh_* modules are not. They need to be loaded before setting
+    up the mappings. This makes sure all paths (initramfs, early and
+    late sysvinit and systemd) load the same modules. (Closes: #827407)
+  * [3d59bff] Add myself to Uploaders:
+  * [f78c116] Update Priority to be optional instead of deprecated extra
+  * [7543c5d] debian/tests/control: Fix Restrictions syntax
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sun, 07 Oct 2018 20:50:13 +0530
+
+multipath-tools (0.7.7-2) unstable; urgency=medium
+
+  * [315dacd] Also include the wwids file
+  * [57d84ce] Update NEWS file about systemd integration
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sun, 07 Oct 2018 20:20:57 +0530
+
+multipath-tools (0.7.7-1) unstable; urgency=medium
+
+  * [d4529eb] Switch packaging repository to Salsa (Closes: #899615)
+  * [d2c41ec] Use tracker as maintainer email address
+  * [1d49dfa] New upstream version 0.7.7
+  * [012281c] Refresh patches and drop one patch which is merged
+    upstream
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 12 Jun 2018 11:34:19 +0545
+
+multipath-tools (0.7.4-3) unstable; urgency=medium
+
+  [ Ritesh Raj Sarraf ]
+  * [a22d317] Make build reproducible.
+    Thanks to Chris Lamb (Closes: #885408)
+  * [f029a76] Add linux-initramfs-tool as a initramfs dependency
+    instead of initramfs-tools. This extends multipath to other
+    implementations like dracut.
+    Thanks to Thomas Lange (Closes: #887917)
+
+  [ Julian Andres Klode ]
+  * [1b595cb] Move dm-mpath rules from position 11 to position 56
+  * [6053243] Install dm-parts.rule
+  * [c1a1a53] Fix /usr/lib/udev to be /lib/udev
+  * [c80ab6e] Fix 11-dm-mpath.rules to check for DM_UDEV_RULES,
+    not DM_UDEV_RULES_VSN
+  * [75d7eff] d/rules: Run dh_clean from clean target
+  * [83c25f2] Install 68-del-part-nodes.rules
+  * [5136bc1] Import upstream commit to fix crash in multipathd
+  * (Closes: #886938)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 10 Feb 2018 11:23:20 +0530
+
+multipath-tools (0.7.4-2) unstable; urgency=medium
+
+  * Upload to Unstable
+  * [5559c5f] Make the package reproducible across builds.
+    Thanks to Chris Lamb (Closes: #885408)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 27 Dec 2017 11:20:03 +0530
+
+multipath-tools (0.7.4-1) experimental; urgency=medium
+
+  * [7ea01e0] Fix incorrect reference to bug number.
+    Thanks to Vincent McIntyre (Closes: 864192)
+  * [36701c1] Update debian/watch to scan git repository.
+    Thanks to Vincent McIntyre (Closes: #814363)
+  * [3117fa1] Fix some lintian warnings about manpages.
+    Thanks to Vincent McIntyre (Closes: 864476)
+  * [006b6c4] Update README.source about cleaning up crufts
+  * [bd8a736] New upstream version 0.7.4
+  * [543a5b6] Refresh patches. And drop some patches which are no more
+    relevant
+  * [19ae7bd] Update gbp.conf to include commit ids
+  * [afe413f] Add new patch to disable rados linkage in udeb
+  * [59f3173] Add pkg-config to build dependency
+  * [743559b] Add libjson-c to build dependency
+  * [a9f65c9] Update install list for multipath-tools package
+  * [a79309b] Drop obsolete build dependency
+  * [cc0d882] Drop old mips linker bug workaround. Shouldn't be needed
+    anymore
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 22 Dec 2017 11:49:58 +0530
+
+multipath-tools (0.6.4-5) unstable; urgency=medium
+
+  * Ship multipath udev rules (Closes: #858456)
+  * Define some priority for rules processing
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 25 Mar 2017 15:03:08 +0530
+
+multipath-tools (0.6.4-4) unstable; urgency=medium
+
+  [ Ritesh Raj Sarraf ]
+  * [65ba796] Fix path for udevadm, which now resides in /bin.
+    Thanks to Michael Biebl (Closes: #852586)
+  * [5291947] Drop non-existent dm-emc module and include
+    dm-round-robin, in initramfs.
+    Thanks to Allan Jacobsen (Closes: #855585)
+
+  [ Christian Ehrhardt ]
+  * [6159c78] debian/control: Bump to an updated udev dependency
+  * [8649315] debian/tests/kpartx-file-loopback: test kpartx
+  * [137dcc1] add Test using tgt and open-iscsi
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 20 Feb 2017 19:36:31 +0530
+
+multipath-tools (0.6.4-3) unstable; urgency=medium
+
+  * [3eecdba] Include libmpathcmd.so in the udeb package.
+    Thanks to Allan Jacobsen (Closes: #852431)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 25 Jan 2017 14:58:53 +0530
+
+multipath-tools (0.6.4-2) unstable; urgency=medium
+
+  * [98a45ae] Add a break against multipath-tools, which now doesn't
+    provide the file. Thanks to Andreas Beckmann (Closes: #850772)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 23 Jan 2017 13:31:59 +0530
+
+multipath-tools (0.6.4-1) unstable; urgency=medium
+
+  * [bb9b6bf] New upstream version 0.6.4
+  * [40f9200] Add patch to cross build from source.
+    Thanks to Helmut Grohne (Closes: #845746)
+  * [35c91d3] Refresh patches
+  * [fbe794c] Add lsb-base to Depends for multipath-tools-boot
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 09 Dec 2016 15:30:50 +0530
+
+multipath-tools (0.6.3-2) unstable; urgency=medium
+
+  * [6915af9] Add patch to disable linking to librados in udeb
+    (Closes: #840157)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sun, 09 Oct 2016 14:39:08 +0530
+
+multipath-tools (0.6.3-1) unstable; urgency=medium
+
+  * [e562899] Update debian/gbp.conf for upstream tag
+  * [06f6fed] New upstream version 0.6.3
+  * [c064fd4] Refresh some patches
+  * [91d2497] Add librados-dev to build depends
+  * [fe064a4] Update Vcs url to cgit
+  * [03f2435] Add full versioned dependency on lsb-base. Thanks lintian
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 08 Oct 2016 23:46:04 +0530
+
+multipath-tools (0.6.2-2) unstable; urgency=medium
+
+  * Upload to Unstable
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 04 Aug 2016 17:34:29 +0530
+
+multipath-tools (0.6.2-1) experimental; urgency=medium
+
+  * [c1c5c8c] Fix manpage about updated kpartx output.
+    Thanks to Joey Hess (Closes: #796948)
+  * [622958b] Document behavior of aio-max-nr.
+    Thanks to Andrew Patterson (Closes: #827322)
+  * [91ae9e0] Switch back to using pristine-tar
+  * [0403d08] Imported Upstream version 0.6.2
+    (Closes: #829496, #830882, #831985)
+  * [2022378] Refresh patches and drop patches that are merged upstream
+  * [9bf63b9] Add liburcu-dev to build dependency
+  * [8e2db83] Update library install list
+  * [6adda96] Drop FAQ. Removed Upstream
+  * [10936fc] Bump Standards Version to 3.9.8
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 23 Jul 2016 14:15:18 +0530
+
+multipath-tools (0.6.1-3) unstable; urgency=medium
+
+  * Upload to Unstable
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 10 Jun 2016 13:10:18 +0530
+
+multipath-tools (0.6.1-2) experimental; urgency=medium
+
+  * [f59f6c1] Bump debhelper version to 9
+  * [7b3bc71] Drop -dbg package in favor of automatic dbgsym packages
+  * [c761232] Add patch to fix build failures with unit values on
+    some architectures
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 01 Jun 2016 17:07:27 +0530
+
+multipath-tools (0.6.1-1) experimental; urgency=medium
+
+  * New upstream release
+  * [80ec942] Refresh patches. And drop disable-blk-availability.patch
+    Fixed upstream
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 31 May 2016 17:15:04 +0530
+
+multipath-tools (0.5.0+git1.656f8865-9) unstable; urgency=medium
+
+  * [41dd269] Add remove condition in prerm script.
+    Thanks to Andreas Beckmann (Closes: #820031)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 05 Apr 2016 21:51:14 +0530
+
+multipath-tools (0.5.0+git1.656f8865-8) unstable; urgency=medium
+
+  * [ff52e14] Cleanup the breakage introduced in -6 build
+    (Closes: #818036, #818293)
+  * [2861458] Fix Vcs-Git URL
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 16 Mar 2016 14:58:20 +0530
+
+multipath-tools (0.5.0+git1.656f8865-7) unstable; urgency=medium
+
+  * [72c07f4] Fix kpartx depending of non-existent service.
+    Thanks to Michael Biebl (Closes: 818036)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 15 Mar 2016 13:35:08 +0530
+
+multipath-tools (0.5.0+git1.656f8865-6) unstable; urgency=medium
+
+  * [c791eeb] Restrict architecture to linux-any because
+    multipath-tools is a Linux only tool
+  * [a7baa90] Build binary independent deb package in respective target.
+    Thanks to Santiago Vila (Closes: #806082)
+  * [1d35c3c] Fix insecure URIs
+  * [bfc44fb] Install -boot init script in correct package
+  * [76cd8dc] Separate m-t-b's lintian overrides
+  * [715ff28] Add separate lintian overrides for m-t-b
+  * [7d81d4f] Call clean target before rebuilding with systemd support.
+    Thanks to Ryan Harper (Closes: #817940)
+  * [5156f96] Make build cleaner for reproducible builds.
+    Thanks to Santiago Vila
+  * Also close other bugs fixed by this release
+    (Closes: #814625, #817147)
+  * [9922d0a] Hand install multipath-tools-boot lintian override file
+  * [7664de3] Add comments to lintian overrides explaning the reason for
+    the overrides
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 12 Mar 2016 17:47:25 +0530
+
+multipath-tools (0.5.0+git1.656f8865-5) unstable; urgency=medium
+
+  * [e91ac62] Fix build to properly generate the arch-independent
+    package. The previous upload had broken the sanboot setup, courtesy
+    missing device mapper support in the ramdisk
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 04 Mar 2016 19:11:45 +0530
+
+multipath-tools (0.5.0+git1.656f8865-4) unstable; urgency=medium
+
+  * Upload to Unstable
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 19 Jan 2016 17:17:06 +0530
+
+multipath-tools (0.5.0+git1.656f8865-3) experimental; urgency=medium
+
+  * [e2039e2] Build arch-independent packages in respective target
+    (Closes: #806082)
+  * [7c4b1b3] Refresh patches and annotate them
+  * [7bc7513] Disable multipath-tools-boot service, when under systemd.
+    Thanks to Felipe Sateler (Closes: #796631)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 28 Dec 2015 22:30:53 +0530
+
+multipath-tools (0.5.0+git1.656f8865-2) unstable; urgency=medium
+
+  * [84d75e9] Drop dependency on initscripts package.
+    Thanks to Michael Biebl (Closes: #804962)
+  * [058b16b] Integrate upstream multipathd.service in Debian.
+    Thanks to Michel Meyers (Closes: #805444)
+  * [ac05992] Fix build for arch independent targets (Closes: #806082)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 19 Dec 2015 14:38:52 +0530
+
+multipath-tools (0.5.0+git1.656f8865-1) unstable; urgency=medium
+
+  * [839e135] Add patch to disable systemd for udebs
+    Thanks Cyril Brulebois (Closes: #800014)
+  * [dddccc9] Let's now switch away from pristine-tar
+  * [e621b5a] Delete all dropped patches, mostly merged upstream
+  * [cf9d7f7] Refresh patches
+  * [1e12230] Make use of USE_SYSTEMD flag during builds
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 17 Oct 2015 13:23:14 +0530
+
+multipath-tools (0.5.0+git0.770e6d0d-3) unstable; urgency=medium
+
+  [ Benjamin Drung ]
+  * [af3f228] init: Fix stop failure when no root device is found
+
+  [ Ritesh Raj Sarraf ]
+  * Upload to Unstable
+  * [fd43c41] Drop udev rule to invoke multipath per path.
+    Thanks to Apollon Oikonomopoulos (Closes: #580972)
+  * [5ffc2f4] Add documentation to cover additional friendly names
+    scenarios. Thanks to Scott Moser (Closes: #788841)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 24 Sep 2015 21:48:55 +0530
+
+multipath-tools (0.5.0+git0.770e6d0d-2) experimental; urgency=medium
+
+  * [a24749d] libmultipath: fix discovery of devices with empty rev
+    sysfs attribute.
+    Thanks to Mauricio Faria de Oliveira (Closes: #782400)
+  * [3d0760f] updates for compatibility with property blacklist.
+    Thanks to Mauricio Faria de Oliveira (Closes: #782488)
+  * [6763082] Add patch to increase the number of retries
+    (Closes: #785251, #734794, #608737)
+  * [b1e5f6f] Add debian/gbp.conf
+  * [95ef9d7] Add build dependency on systemd
+  * [d7bd3c8] Call systemd in debian/rules. Also adapt init service
+    aliasing. Thanks to Michael Biebl
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 01 Sep 2015 23:11:18 +0530
+
+multipath-tools (0.5.0+git0.770e6d0d-1) experimental; urgency=medium
+
+  * [36c3df5] Imported git revision 0.5.0+git0.770e6d0d
+    Upstream is very slow in doing releases
+  * [283f094] Drop the patch to disable systemd
+  * [6fd4c28] Refresh patches, and drop some minor ones included upstream
+  * [3eab5a1] Add libsystemd-dev to Build Dependency
+  * [ee9a3e8] Add systemd service and socket file to multipath-tools
+    package.
+  * [bbbf6e8] Update lintian overrides
+  * [5dfcd7e] Add Alias=multipath-boot.service for systemd integration
+  * [340c96a] Refresh patch for quilt
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sun, 09 Aug 2015 14:42:48 +0530
+
+multipath-tools (0.5.0-7) unstable; urgency=medium
+
+  * [15ecad9] Add dm-service-time path checker.
+    Thanks to Mauricio Faria de Oliveira (Closes: #782363)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 28 May 2015 11:30:00 +0530
+
+multipath-tools (0.5.0-6) unstable; urgency=medium
+
+  [ Mauricio Faria de Oliveira ]
+  * Build multipath-udeb with static libgcc (Closes: #779579)
+
+ -- Mauricio Faria de Oliveira <mauricfo@linux.vnet.ibm.com>  Tue, 03 Mar 2015 15:52:58 -0300
+
+multipath-tools (0.5.0-5) unstable; urgency=medium
+
+  * [5f967eb] Better daemon status in init's status action.
+    Thanks to Joerg Jaspert (Closes: #755483)
+  * [8455ce6] Introduce kpartx-udeb.
+    Thanks to Philip Susi (Closes: #751029)
+  * [72419cd] Fix syntax error in debian/control file
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 16 Sep 2014 14:59:11 +0530
+
+multipath-tools (0.5.0-4) unstable; urgency=medium
+
+  * [55c2ef2] Drop systemd support in multipath-tools
+    (Closes: #759849, #760182, #760189)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 05 Sep 2014 17:50:03 +0530
+
+multipath-tools (0.5.0-3) unstable; urgency=medium
+
+  * [6c453f2] Install sytemd files into /lib/systemd/system/
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 01 Sep 2014 15:49:28 +0530
+
+multipath-tools (0.5.0-2) unstable; urgency=medium
+
+  * [631296d] Add libsystemd-daemon-dev to Build-Dep (Closes: #759849)
+  * [742c706] Add systemd files
+  * [0783f2e] Add lintian override because, for systemd, we are
+    shipping upstream's service file. There is no point in redoing
+    the whole stuff of renaming the systemd service file.
+    Also, it is yet to see how systemd will handle many of the pre/post
+    checks that we had the flexibility to do in the shell init scirpt
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 01 Sep 2014 14:10:40 +0530
+
+multipath-tools (0.5.0-1) unstable; urgency=low
+
+  * [955018b] Imported Upstream version 0.5.0
+  * [10f0910] We now ship the systemd service file
+  * [9606cde] Drop socket activation through udev rules
+  * [1fe46fb] Add patch 0012-format-security-build-fixes.patch
+  * [2678d22] Drop patch 0006-read-only-partition-mappings-manpage.patch
+    Applied upstream
+  * [e191244] Drop Conflicts with Breaks
+  * [0e87578] Add status to init scripts
+  * [1d3aa3d] Add Italian translation for debconf.
+    Thanks to Beatrice Torraca (Closes: #729797)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sun, 09 Mar 2014 16:52:09 +0530
+
+multipath-tools (0.4.9+git0.9c3c5172-1) unstable; urgency=low
+
+  * [b6f1bce] Emphasize on the alias feature.
+    Thanks to Vincent McIntyre (Closes: #716655)
+  * [3eab3e3] Restore multipath's dependence on dmsetup_env tool.
+    Thanks to Salvatore Bonaccorso, Gordon Grubert (Closes: #726296, #726311)
+  * [1bcf079] Imported Upstream version 0.4.9+git0.9c3c5172
+  * [62c8f71] Update README.source with updated instructions
+  * [3b4c3db] Enable standard hardening knobs
+  * [54ea833] Add build dependency on libudev-dev
+  * [94c01e4] Ship mpath persist manpages in the multipath-tools package
+  * [d09e731] Update multipath-tools.install for mpathpersist
+  * [997abf1] Fix Vcs links
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 05 Nov 2013 12:38:57 +0530
+
+multipath-tools (0.4.9+git0.4dfdaf2b-7) unstable; urgency=low
+
+  * [8c5d841] Fix upstream copy of kpartx rules (Closes: #618700)
+  * [a3a6c10] Call PREREQS before calling scripts/functions.
+    Thanks to Guy Rossin, Michael Prokop
+  * [7572c53] Don't plain exit if root is on multipath device.
+    Thanks to Guy Rossin (Closes: #704073)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 11 Jun 2013 00:14:50 +0530
+
+multipath-tools (0.4.9+git0.4dfdaf2b-6) unstable; urgency=low
+
+  * [821cc20] Don't fail if no dm aware (root) device is reported
+    (Closes: #674733)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 28 May 2012 18:19:12 +0530
+
+multipath-tools (0.4.9+git0.4dfdaf2b-5) unstable; urgency=low
+
+  * [08990d2] Fix root device detection syntax.
+    Thanks to Bernhard Reutner-Fischer (Closes: #674029)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sun, 27 May 2012 08:36:40 +0530
+
+multipath-tools (0.4.9+git0.4dfdaf2b-4) unstable; urgency=low
+
+  * [8ab1022] Fix path scope in initscript to accomodate awk from /usr
+    (Closes: #663662)
+  * [aa5ff3f] Use correct po filename for Brazilian translations.
+    Thanks to Adriano Rafael Gomes (Closes: #664371)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 28 Apr 2012 20:21:38 +0530
+
+multipath-tools (0.4.9+git0.4dfdaf2b-3) unstable; urgency=low
+
+  * [d46bb8f] Fix hardening build flags (Closes: #657848)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 12 Mar 2012 20:53:46 +0530
+
+multipath-tools (0.4.9+git0.4dfdaf2b-2) unstable; urgency=low
+
+  * Upload to unstable
+  * [4e3eedb] Drop syslog loggin in initrd.
+    Thanks to Martin Sofaru (Closes: #661597)
+  * [787ad2a] Enable hardening build flags.
+    Thanks to Moritz Muehlenhoff (Closes: #657848)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Mon, 05 Mar 2012 23:30:52 +0530
+
+multipath-tools (0.4.9+git0.4dfdaf2b-1) experimental; urgency=low
+
+  * [6771cd8] Don't stop multipathd if root is on a multipathed device
+    (Closes: #632124)
+  * [6a08452] Add Dutch Translation.
+    Thanks to Jeroen Schot (Closes: #655459)
+  * [e7fc772] Imported Upstream version 0.4.9+git0.4dfdaf2b
+  * [43d3f10] Fix slow discovery of multipath devices.
+    Thanks to Laurent Bigonville, Frido Roose (Closes: 646900)
+  * Dropped Patches
+    [37827c5] 0002-Make-user_friendly_names-compatible-to-multipath-too.patch
+  * Patches merged upstream
+    [2ac8eb8] 0004-add-r-to-make-resulting-device-read-only.patch
+    [6eee19a] 0008-kpartx-example-manpage.patch
+  * [3a81caa] Refresh patch 0007-do-not-link-against-ncurses.patch
+  * [e6f9cdc] install systemd example service under docs
+  * [0f87973] add build-arch and build-indep targets
+  * [9d94c2d] fix license name in copyright
+  * [7884ddc] some more spelling and hyphentation fixes
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 10 Feb 2012 18:25:29 +0530
+
+multipath-tools (0.4.9-3) unstable; urgency=low
+
+  * [dd85b8b] Add example to kpartx manpage. Committed upstream.
+    Thanks to Lars Wirzenius (Closes: 637538)
+  * [652acf5] Add Brazilian Portuguese debconf templates translation.
+    Thanks to Flamarion Jorge (Closes: 640802)
+  * [71df377] Add Danish translation of the debconf templates multipath-tools.
+    Thanks to Joe Hansen (Closes: #628225)
+  * [19ab90f] Avoid unnecessary linkage to ncurses library.
+    Thanks to Sven Joachim (Closes: 646148)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 03 Dec 2011 19:34:59 +0530
+
+multipath-tools (0.4.9-2) unstable; urgency=low
+
+  * [2544655] wait harder for multipath init. Thanks to Serge Hallyn for
+    the patch
+  * [eb87e52] switch to 3.0 quilt source format
+  * [e55a306] explictly mention license copyright
+  * [52db82f] update vcs headers
+  * [8313f77] with dpkg > 1.15.7 we now don't need XC
+  * [8fdf077] update short description for multipath udeb package
+  * [c409ef3] add misc:Depends for multipath-udeb
+  * [c890181] take maintenance of package (Closes: #607911)
+  * [09bbbc8] add debugging symbols package. Thanks to Craig Magina.
+    (Closes: #609068)
+  * [2e6f8a7] spelling/hyphen fixes
+  * [97e02e7] add manpage for read-only mappings
+  * [5419352] add-r-to-make-resulting-device-read-only. Thanks to Wakko Warner
+    for the patch (Closes: #504678)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 05 Mar 2011 03:22:32 +0530
+
+multipath-tools (0.4.9-1) unstable; urgency=low
+
+  [ Guido Günther ]
+  * New upstream version 0.4.9 (Closes: #587315, #595127)
+  * [500e341] Don't fail "mulitipath-tools start" if multipathd is
+    already running (Closes: #587678)
+  * [f4e697c] Drop upstream patches:
+      * 0001-Fix-udev-rules-for-dmraid.patch
+      * 0003-fix-URL-to-FAQ.patch
+      * 0004-check-header-file-for-defintion-of-dm_task_no_flush.patch
+      * 0005-set-a-soname.patch
+      * 0006-add-library-dependencies.patch
+      * 0007-multipath-tools-rdac-path-checked-leads-to-I-O-hang-.patch
+      * 0010-Dots-are-special-in-groff.patch
+      * 0011-multipath-fix-offset-for-containted-slices.patch
+  * [678dcb6] Bindings file moved to /etc/multipath
+  * [ac2f9d5] Bump standards version
+  * [baea3a2] Add upstream homepage
+  * [9daa1b8] Remove /usr from $PATH so lintian doesn't assume we're
+    calling scripts from $remove_fs.
+  * [1a3c85e] Update po files
+
+ -- Guido Günther <agx@sigxcpu.org>  Wed, 01 Sep 2010 15:10:26 +0200
+
+multipath-tools (0.4.8+git0.761c66f-9) unstable; urgency=low
+
+  * [0435cc1] Make sure the patchcheckers end up in /lib (Closes: #581377)
+  * [858f733] New patch 0011-multipath-fix-offset-for-containted- slices.patch
+    multipath: fix offset for containted slices. (Closes: #586104) - thanks to
+    Benjamin Marzinski
+
+ -- Guido Günther <agx@sigxcpu.org>  Wed, 16 Jun 2010 20:02:47 +0200
+
+multipath-tools (0.4.8+git0.761c66f-8) unstable; urgency=low
+
+  * [16268d8] Drop path from dmsetup_env call - thanks to Ferenc Wagner
+  * [2f3bdd5] Use $name in multipath.udev as well - thanks to Ferenc Wagner
+    for testing
+  * [c978487] Don't pass -g on mips(el) to work around a binutils bug.  See
+    http://sources.redhat.com/bugzilla/show_bug.cgi?id=10144 for details.
+  * [9daf438] Make sure we discover multipaths before checkfs/mountall runs
+    This covers the cornercase where e.g. /home is on multipath (but not on
+    LVM) and multipath-tols aren't started via initramfs. (Closes: #577172)
+  * [f7cc840] Bump standards version
+
+ -- Guido Günther <agx@sigxcpu.org>  Sun, 11 Apr 2010 13:22:35 +0200
+
+multipath-tools (0.4.8+git0.761c66f-7) unstable; urgency=low
+
+  * [13f7436] Properly add multipath-udeb to dh_makeshlibs (Closes: #564489) -
+    thanks to again Frans Pop
+
+ -- Guido Günther <agx@sigxcpu.org>  Sat, 23 Jan 2010 00:14:04 +0100
+
+multipath-tools (0.4.8+git0.761c66f-6) unstable; urgency=low
+
+  * [5b0c7be] Fix dependency on nonexistent multipath-tools udeb (Closes:
+    #564489) - thanks to Frans Pop
+  * [c2a06f7] New patch debian/patches/0010-Dots-are-special-in- groff.patch
+    Dots are special in groff
+
+ -- Guido Günther <agx@sigxcpu.org>  Sun, 10 Jan 2010 18:10:05 +0100
+
+multipath-tools (0.4.8+git0.761c66f-5) unstable; urgency=low
+
+  * [9c68527] Explicitly include posix_types.h to get the correct type for
+    __kernel_old_dev_t (Closes: #558990)
+
+ -- Guido Günther <agx@sigxcpu.org>  Sat, 05 Dec 2009 18:14:05 +0100
+
+multipath-tools (0.4.8+git0.761c66f-4) unstable; urgency=low
+
+  * [eb7bcf2] Add kpartx_id to initramfs for persistent partition links.
+  * [7ecd444] Use $name instead of $kernel since 2.6.31 doesn't create
+    /dev/dm-* anymore.
+
+ -- Guido Günther <agx@sigxcpu.org>  Sat, 21 Nov 2009 21:11:31 +0100
+
+multipath-tools (0.4.8+git0.761c66f-3) unstable; urgency=low
+
+  * upload to unstable
+  * [f62b619] Tighten multipath-tools-boot dependency Older versions might not
+    be able to cope with renamed patch checkers, etc.
+  * [7bb23db] Add udev rules to initramfs This makes the initramfs properly
+    event based. Once #455979 is fixed in LVM, root on lvm on multipatph can
+    work reliably. (Closes: #539498)
+  * [d9fcc80] Another init script dependency fix (Closes: #542370) - thanks to
+    Petter Reinholdtsen
+  * [3faab35] redo patches
+  * [c903696] Make user_friendly_names compatible to multipath-tools 0.4.8 and
+    earlier
+
+ -- Guido Günther <agx@sigxcpu.org>  Sat, 21 Nov 2009 18:04:07 +0100
+
+multipath-tools (0.4.8+git0.761c66f-2) experimental; urgency=low
+
+  * [34758f1] don't install files into /lib64 on 64 bit architectures - thanks
+    to Pascal de Bruijn
+  * [2b0a3da] use libreadline-dev (Closes: #553813)
+  * [8394b3a] cherry-pick 362d2e5f215894818b52a0d03b723b75917390fb (Closes:
+    #555901)
+
+ -- Guido Günther <agx@sigxcpu.org>  Thu, 12 Nov 2009 17:35:28 +0100
+
+multipath-tools (0.4.8+git0.761c66f-1) experimental; urgency=low
+
+  * upload current git snapshot to experimental
+  * [71c9c74] warn about user_friendly_names and suggest using /dev/disk/by-id/
+  * [329762e] increase locking timeout on bindings file to 30 secs - thanks to
+    Ritesh Raj Sarraf for the patch
+  * [759ad9b] add spanish translation (Closes: #528972) - thanks to Fernando
+    González de Requena
+  * [7c327fa] add Czech translation (Closes: #533524) - thanks to Tomas Fidler
+  * [49c78ba] drop patches merged upstream:
+        * 0001-get-rid-of-arch-specific-ifdef-spaghettis.patch
+        * 0002--libmultipath-filter_wwid-is-called-with-the-wron.patch
+        * 0004--kpartx-fix-extended-partition-handling.patch
+        * 0005--kpartx-remove-partitions-in-reverse-order.patch
+        * 0006--kpartx-documentation-fixes.patch
+        * 0007--kpartx-remove-dead-code.patch
+        * 0008-udev-as-of-0.124-doesn-t-support-scsi_id-s-anymor.patch
+        * 0011--kpartx-use-uint64_t-to-account-slices-start-size.patch
+        * 0012--libmultipath-Update-discovery-to-work-with-new-sys.patch
+        * 0013-multipathd-crash-on-shutdown.patch
+        * 0014--var-run-multipathd.sock-is-world-writable.patch
+        * 0015-Increase-timeout-to-30-secs-to-avoid-locking-issue.patch
+  * [52b5373] checkers and prio callouts are now SOs
+  * [e493cde] debian/rules: use --fail-missing
+  * [b1c5baf] devmap_name is no more
+  * [fd41e76] bump standards version
+  * [82dc3df] drop iscsi to work around #542370
+  * [cce7640] new patch:
+    0004-check-header-file-for-defintion-of-dm_task_no_flush: check the header
+    file for dm_task_no_flush instead
+    of one of the installed libs.
+  * [876a5fb] new patch: 0005-set-a-soname.patch add a soname to libmultipath
+  * [1912767] new patch 0006-add-library-dependencies.patch add libraries to
+    the linker call
+  * [4d1b506] add dh_makeshlibs call
+  * [1ee06d5] install lib with soname
+
+ -- Guido Günther <agx@sigxcpu.org>  Sun, 30 Aug 2009 15:53:24 +0200
+
+multipath-tools (0.4.8-15) unstable; urgency=low
+
+  * [e3fdd6f] add iscsi as a prereq and add verbose logic from mdadm.
+  * [9299e3d] On shutdown multipathd flushes its internal message queue
+    but we have to check if the messages on the queue are not empty.
+    (Closes: #519252)
+  * [df5ee21] fix umask of multipathd socket (CVE-2009-0115). Upstream
+    commit 0a0319d381249760c71023edbe0ac9c093bb4a74. (Closes: #522813)
+
+ -- Guido Günther <agx@sigxcpu.org>  Mon, 06 Apr 2009 19:36:25 +0200
+
+multipath-tools (0.4.8-14) unstable; urgency=low
+
+  * [6dad4a0] kpartx: use uint64_t to account slices start/size based on
+    65d108fbe. Fixes handling of devices >2TB.
+    (Closes: #512601) - thanks to Vincent McIntyre for testing
+  * [1fe965c] fix failure to gather block device information. Cherry-pick
+    88f88d from upstream: With the new sysfs layout the parent device of a
+    block device is 'block', and only the parent of this is the 'real' parent.
+    Fixes problems on kernels >= 2.6.27.
+    (LP: #307032) - thanks to Jens Langner for forwarding this.
+  * [85c6d6e] README.Debian: explain howto best access multipath devices
+    (Closes: #510911) - thanks to Vincent McIntyre
+  * [a2bf65e] FAQ: fix URL to FAQ - thanks to Vincent McIntyre
+  * [e65a06d] README.Debian: doc typo
+  * [a1de95f] add ja debconf translation
+    (Closes: #512857) - thanks to Hideki Yamane
+  * [8400b79] rules: drop redo-patches target handled via external script now
+  * [50eb583] control: fix maintainer name
+  * [fe7e471] drop superflous headers and footers of patches, no functional
+    changes
+
+ -- Guido Günther <agx@sigxcpu.org>  Thu, 29 Jan 2009 10:17:36 +0100
+
+multipath-tools (0.4.8-13) unstable; urgency=low
+
+  [ Guido Günther ]
+  * [5585feb] simplify udev dependency
+  * [4cc8116] add a versioned dependency on dmsetup (Closes: #497686)
+  * [9887760] blacklist cciss devices (Closes: #500991)
+
+ -- Guido Günther <agx@sigxcpu.org>  Fri, 03 Oct 2008 12:42:46 +0200
+
+multipath-tools (0.4.8-12) unstable; urgency=low
+
+  * [2ee3c11] udev as of 0.124 doesn't support 'scsi_id -s' anymore
+  * [736eaa3] ...unfortunately older udev's don't support 'scsi_id -d'
+    properly so add a conflict
+  * [49961fa] update bugnumbers for the "dmsetup export" fun
+  * [82d47a3] bump standards version
+  * [18fb979] add README.source
+
+ -- Guido Guenther <agx@sigxcpu.org>  Thu, 21 Aug 2008 09:28:30 +0200
+
+multipath-tools (0.4.8-11) unstable; urgency=low
+
+  * [3dadace] use the full path to dmsetup so we don't have to worry about
+    $PATH
+  * [33642da] update initramfs during postinst/postrm (Closes: #477839)
+  * [41391c9] Conflict on etch's multipath-tools-initramfs - together with the
+    multipath-tools-initramfs NMU from Bernd Zeimetz this provides a clean
+    upgrade path from etch to lenny for multipath-tools-initramfs users.
+  * [4f8a5d1] Call multipath via udev on block device add/change events This
+    helps slow devices when either /etc/init.d/multipath-tools-boot or the
+    initramfs script are being run although the devices are not ready yet.
+    (Closes: #489850) - many thanks to Janusz Dziemidowicz for his suggestions
+    and testing
+  * [5cbb079] add swedish debconf translation (Closes: #492107) - thanks to
+    Martin Ågren
+  * [12639e9] redo quilt patches - no code changes
+
+ -- Guido Guenther <agx@sigxcpu.org>  Wed, 30 Jul 2008 17:59:03 -0400
+
+multipath-tools (0.4.8-10) unstable; urgency=low
+
+  * [183da2c] Add russion debconf translation (Closes: #486353) - thanks
+    to Yuri Kozlov
+  * [02b7853] Add pt, de, and fr translations (Closes: #482035, #482845,
+    #482905) - thanks to the Portuguese Translation Team, Helge
+    Kreutzmann and Jean Guillou
+
+ -- Guido Guenther <agx@sigxcpu.org>  Thu, 19 Jun 2008 13:06:09 +0200
+
+multipath-tools (0.4.8-9) unstable; urgency=low
+
+  * [958c4b1] attach multipath.conf to bugreports
+  * [2ac083e] make multipath-tools-boot arch all
+  * [2eb8b51] Warn about outdated /etc/multipath.conf via debconf. The
+    changed location of udev's /sbin/scsi_id already hit two people.
+    Since this renders the system unbootable we should warn about it at
+    priority critical. (Closes: #481447)
+
+ -- Guido Guenther <agx@sigxcpu.org>  Sat, 17 May 2008 15:13:40 +0200
+
+multipath-tools (0.4.8-8) unstable; urgency=low
+
+  * libdevmapper doesn't ship the init script anymore so drop that and depend
+    on checkroot instead so we have a defined boot order (Closes: 470063)
+  * multipath-tools.init: remove superflous stop link in S in the LSB header
+  * add boot breakage warning to multipath-tools boot
+  * depend on libdevmapper-dev (>= 2:1.02.20) instead of (>= 2:1.02.20-1)
+    since this eases backports
+  * bump standards version
+
+ -- Guido Guenther <agx@sigxcpu.org>  Sun, 09 Mar 2008 18:55:38 +0100
+
+multipath-tools (0.4.8-7) unstable; urgency=low
+
+  * add watch file
+  * move multipath-tools-boot startup to S21 to allow module-loading
+    (Closes: #457804)
+
+ -- Guido Guenther <agx@sigxcpu.org>  Tue, 08 Jan 2008 13:49:18 +0100
+
+multipath-tools (0.4.8-6) unstable; urgency=low
+
+  * depend on a libaio that resides in /lib (>= 0.3.106-8) so we can...
+  * ...drop link-libaio-static.diff
+  * fix_wwid_blacklist.diff: pulled from upstream to fix blacklisting by
+    wwid
+  * kpartx-docfix.diff: document -g
+  * kpartx-remove-dead-code.diff: remove unused commandline option
+  * kpartx-fix-extpart-rm.diff: fix partition removal of extended
+    partitions
+
+ -- Guido Guenther <agx@sigxcpu.org>  Sat, 01 Dec 2007 15:41:36 +0100
+
+multipath-tools (0.4.8-5) unstable; urgency=low
+
+  * apply kpartx-fix-udev-dmraid.diff to our shipped udev rules too
+  * fix itemized list in control file (Closes: #441176)
+  * link statically against libaio since it's in /usr/lib and
+    multipath{,d} are in /sbin and we can avoid a libaio udeb for now
+  * build a udeb for d-i support (Closes: #440334)
+
+ -- Guido Guenther <agx@sigxcpu.org>  Fri, 07 Sep 2007 19:47:05 +0200
+
+multipath-tools (0.4.8-4) unstable; urgency=low
+
+  * split out initramfs support into a separate package (Closes: #440206)
+  * copy persistent bindings into initramfs
+  * debian/rules: don't ignore errors on clean (to make lintian happy)
+  * multipath-tools-boot.sh: add Default-Stop pseudo header
+
+ -- Guido Guenther <agx@sigxcpu.org>  Fri, 31 Aug 2007 09:47:35 +0200
+
+multipath-tools (0.4.8-3) unstable; urgency=low
+
+  * add a prerm script to handle updates from broken versions that don't allow
+    for a stopped multipathd in the init script, really (closes: #439126).
+
+ -- Guido Guenther <agx@sigxcpu.org>  Sun, 26 Aug 2007 10:24:49 +0200
+
+multipath-tools (0.4.8-2) unstable; urgency=low
+
+  * initramfs: mpath_prio_tpc has been renamed to mpath_prio_rdac
+  * fetch patches by Hannes Reinecke from dm-devel:
+  	* fix udev rule for dmraid: kpartx-fix-udev-dmraid.diff
+        * fix extended partition calculation in kpartx: kpartx-fix-extpart.diff
+  * fix DEB_BUILD_OTIIONS=nostrip (Closes: #437596)
+
+ -- Guido Guenther <agx@sigxcpu.org>  Mon, 13 Aug 2007 18:32:12 +0200
+
+multipath-tools (0.4.8-1) unstable; urgency=low
+
+  * new upstream release
+  * drop clariion-fix-read-buffer.diff, applied upstream
+  * init script: don't fail the stop target if multipathd
+  * conflict with multipath-tools-initramfs
+
+ -- Guido Guenther <agx@sigxcpu.org>  Sat, 04 Aug 2007 13:08:52 +0200
+
+multipath-tools (0.4.7-9) unstable; urgency=low
+
+  * fix segfault on EMC Clariions
+  * add initramfs hooks to support rootfs on multipath
+  * version the dependency on dmsetup since the one from etch doesn't
+    support -oattr needed by dmsetup_env
+  * use LSB functions in init scripts
+
+ -- Guido Guenther <agx@sigxcpu.org>  Tue, 31 Jul 2007 14:01:00 +0200
+
+multipath-tools (0.4.7-8) unstable; urgency=low
+
+  * since Debian's dmestup doesn't include the "export" patch used by other
+    distros (#434241), work around this by implementing a minimal dmsetup_env
+    that can be used by kpartx.udev (Closes: #376161)
+  * add LSB headers to init scripts
+
+ -- Guido Guenther <agx@sigxcpu.org>  Sat, 28 Jul 2007 17:34:48 +0200
+
+multipath-tools (0.4.7-7) unstable; urgency=low
+
+  * create build dirs (Closes: #425910)
+  * forward to upstream git b413c9dbe554c2d50aba7c6446ec86f850cf8dde
+  * drop libmultipath-cache-sysfs_devices.diff, applied upstream
+
+ -- Guido Guenther <agx@sigxcpu.org>  Fri, 27 Jul 2007 22:25:29 +0200
+
+multipath-tools (0.4.7-6) unstable; urgency=low
+
+  * kpartx.udev: fix path to kpartx_id
+  * install kpartx_id
+  * debian/control: add XS-Vcs-Browser
+
+ -- Guido Guenther <agx@sigxcpu.org>  Sun, 22 Jul 2007 15:38:05 +0200
+
+multipath-tools (0.4.7-5) unstable; urgency=low
+
+  * forward to upstream git 00fe3ac6ff515bec4a2c7385d6e2e4a7ed5dfb36
+  * new patch: libmultipath-cache-sysfs_devices.diff (Closes: #433949)
+
+ -- Guido Guenther <agx@sigxcpu.org>  Fri, 20 Jul 2007 23:15:27 +0200
+
+multipath-tools (0.4.7-4) unstable; urgency=low
+
+  * move to git
+  * Drop patches applied upstream:
+  	  * fix-segfault-on-disappearing-paths.diff
+          * exclude-quilt.diff
+          * scsi_id.diff
+          * Makefile_cleanups.diff
+  * use dh_installudev
+  * no need to build-depend on libsysfs-dev anymore
+  * build-depend on libaio-dev
+
+ -- Guido Guenther <agx@sigxcpu.org>  Fri, 29 Jun 2007 11:31:28 -0400
+
+multipath-tools (0.4.7-3) experimental; urgency=low
+
+  * forward to upstream git as of 178b93111d54828a89ad280c0aaaea0812343a6a
+    (Closes: #427532, #365363)
+  * adjust scsi_id.patch to apply again
+  * drop udev.patch, not needed
+  * make sure multipath-tools-init runs after udev so the /dev/mapper/
+    entries appear in the correct place
+  * debhelper version 5 (Closes: #425910)
+  * split out kpartx into a separate package (Closes: #422600)
+
+ -- Guido Guenther <agx@sigxcpu.org>  Fri, 08 Jun 2007 11:51:00 +0200
+
+multipath-tools (0.4.7-2) unstable; urgency=low
+
+  [ Bastian Blank ]
+  * Use /lib/udev/scsi_id. (closes: #358985)
+
+  [ Guido Guenther ]
+  * Acknowledge NMU - thanks John! (closes: #382244)
+  * use quilt for the git patch
+  * remove Bastian and Andres from Uploaders on their request
+  * cleanup pp_hds_modular so the package is rebuildable several times
+  * scsi_id.diff, Makefile-cleanups.diff, remove-arch-ifdefs.diff, udev.diff:
+    split out Debian's modifications into separate patches
+  * remove now superflous multipath.sh (closes: #350814)
+  * bump standards version to 3.7.2 (no source changes)
+
+ -- Guido Guenther <agx@sigxcpu.org>  Wed, 20 Dec 2006 17:40:59 +0100
+
+multipath-tools (0.4.7-1.1) unstable; urgency=medium
+
+  * Added missing dependency on dmsetup.  Closes: #381068.
+  * Fixed PID file handling.  Closes: #294066.
+  * Pulled in numerous fixes from upstream git tree to fix
+    various segfaults, spewing garbage onto the console, etc.
+    Tree is now synced to upstream git as of commit
+    40b575955cc189aa993e6a030b66b5fef6bcf288 on July 19, 2006,
+    which is the current state of the upstream tree.  Closes: #382214.
+
+ -- John Goerzen <jgoerzen@complete.org>  Wed,  9 Aug 2006 11:52:08 -0500
+
+multipath-tools (0.4.7-1) unstable; urgency=low
+
+  * New upstream version.
+    - Build against libsysfs2. (closes: #355775)
+  * Acknowledge NMU. (closes: #337081)
+
+ -- Bastian Blank <waldi@debian.org>  Fri, 17 Mar 2006 17:23:03 +0100
+
+multipath-tools (0.4.6-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Bastian Blank <waldi@debian.org>  Thu, 09 Feb 2006 22:12:52 +0100
+
+multipath-tools (0.4.5-3) unstable; urgency=low
+
+  * Fix kpartx compiling errors and dos support.
+
+ -- Bastian Blank <waldi@debian.org>  Fri, 30 Sep 2005 13:01:55 +0200
+
+multipath-tools (0.4.5-2) unstable; urgency=low
+
+  * Move boot init script before udev and load dm-multipath module.
+
+ -- Bastian Blank <waldi@debian.org>  Wed, 28 Sep 2005 19:35:49 +0200
+
+multipath-tools (0.4.5-1) unstable; urgency=low
+
+  * New upstream version.
+  * Move device check logic to udev rules.
+  * Don't longer create devices in /dev by default.
+
+ -- Bastian Blank <waldi@debian.org>  Mon, 19 Sep 2005 16:32:00 +0200
+
+multipath-tools (0.4.2.4-2) unstable; urgency=medium
+
+  * New maintainer.
+  * Rebuild against new libdevmapper.
+
+ -- Bastian Blank <waldi@debian.org>  Fri, 04 Mar 2005 15:16:30 +0100
+
+multipath-tools (0.4.2.4-1) unstable; urgency=low
+
+  * New upstream.
+    NOTE: This is actually upstream's 0.4.2 but 0.4.2.3 came first for some
+    reason.
+  * Use start-stop-daemon to control the multipathd daemon and do it's own
+    PID file handling (which is now commented out of the daemon itself)
+
+ -- Patrick Caulfield <patrick@debian.org>  Fri, 28 Jan 2005 15:15:01 +0000
+
+multipath-tools (0.4.2.3-1) unstable; urgency=low
+
+  * New upstream
+  * Remove initrd files as they break things.
+    Closes: #288150
+  * Fix some duplicate patching.
+
+ -- Patrick Caulfield <patrick@debian.org>  Mon, 17 Jan 2005 11:19:20 +0000
+
+multipath-tools (0.4.1-1) unstable; urgency=low
+
+  * New upstream
+    Closes: #295926, #286789
+  * Include initrd scripts contributed by Guido Guenther
+    Closes: #286791
+
+ -- Patrick Caulfield <patrick@debian.org>  Thu, 13 Jan 2005 09:25:42 +0000
+
+multipath-tools (0.4.0-1) unstable; urgency=low
+
+  * New upstream
+
+ -- Patrick Caulfield <patrick@debian.org>  Fri, 24 Dec 2004 11:54:44 +0000
+
+multipath-tools (0.3.9-1) unstable; urgency=low
+
+  * New upstream
+
+ -- Patrick Caulfield <patrick@debian.org>  Tue,  7 Dec 2004 13:15:15 +0000
+
+multipath-tools (0.3.8-1) unstable; urgency=low
+
+  * New upstream
+  * Fix error in preinst, when upgrading.
+  * Don't clean klibc directory.
+    Closes: #283043
+
+ -- Patrick Caulfield <patrick@debian.org>  Mon, 29 Nov 2004 08:56:50 +0000
+
+multipath-tools (0.3.7-1) unstable; urgency=low
+
+  * New upstream
+
+ -- Patrick Caulfield <patrick@debian.org>  Sat, 13 Nov 2004 11:14:35 +0000
+
+multipath-tools (0.3.6-1) unstable; urgency=low
+
+  * Initial upload. Based loosely on upstream's work
+    Closes: #277898
+
+ -- Patrick Caulfield <patrick@debian.org>  Wed,  3 Nov 2004 10:16:34 +0000
