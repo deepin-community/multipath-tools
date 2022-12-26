@@ -1,0 +1,23 @@
+From: Ritesh Raj Sarraf <rrs@debian.org>
+Date: Wed, 28 Apr 2021 22:06:50 +0530
+Subject: Fix bashism in kpartx_id script
+
+Thanks: Julien Cristau
+Closes: #987669
+---
+ kpartx/kpartx_id | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kpartx/kpartx_id b/kpartx/kpartx_id
+index c45db2f..18732e7 100755
+--- a/kpartx/kpartx_id
++++ b/kpartx/kpartx_id
+@@ -93,7 +93,7 @@ if [ -n "$dmdeps" ] ; then
+ else
+     echo "DM_TYPE=raid"
+ fi
+-if [[ $dmserial ]]; then
++if [ -n "$dmserial" ]; then
+     echo "DM_SERIAL=$dmserial"
+ fi
+ 

@@ -1,0 +1,26 @@
+From: Debian DM Multipath Team <team+linux-blocks@tracker.debian.org>
+Date: Wed, 23 Dec 2020 22:52:02 +0000
+Subject: kpartx udev: hack in dmsetup_env
+
+See bugs #434241, #487881, #493078.
+
+Status: unclear if still needed in bullseye.
+---
+ kpartx/kpartx.rules | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/kpartx/kpartx.rules b/kpartx/kpartx.rules
+index d7527d7..dfd67da 100644
+--- a/kpartx/kpartx.rules
++++ b/kpartx/kpartx.rules
+@@ -9,6 +9,10 @@ ACTION!="add|change", GOTO="kpartx_end"
+ ENV{DM_UUID}!="?*", GOTO="kpartx_end"
+ ENV{DM_UDEV_DISABLE_OTHER_RULES_FLAG}=="1", GOTO="kpartx_end"
+ 
++# This is a temporary hack until Debian's dmsetup properly supports "dmsetup
++# export". For more information see: #434241, #487881, #493078
++IMPORT{program}="dmsetup_env %M %m"
++
+ # Create dm tables for partitions on multipath devices.
+ ENV{DM_UUID}!="mpath-?*", GOTO="mpath_kpartx_end"
+ 

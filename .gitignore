@@ -12,7 +12,6 @@ multipathd/multipathd
 mpathpersist/mpathpersist
 .nfs*
 *.swp
-*.patch
 *.rej
 *.orig
 libdmmp/docs/man/*.3.gz

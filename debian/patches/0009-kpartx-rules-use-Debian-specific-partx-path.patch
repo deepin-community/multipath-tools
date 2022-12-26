@@ -1,0 +1,24 @@
+From: Chris Hofstaedtler <zeha@debian.org>
+Date: Wed, 23 Dec 2020 23:06:44 +0000
+Subject: kpartx rules: use Debian-specific partx path
+
+Use Debian-specific path for partx (from util-linux).
+
+Forwarded: no
+Origin: vendor
+---
+ kpartx/del-part-nodes.rules | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kpartx/del-part-nodes.rules b/kpartx/del-part-nodes.rules
+index 0ceecf5..5ab5853 100644
+--- a/kpartx/del-part-nodes.rules
++++ b/kpartx/del-part-nodes.rules
+@@ -28,6 +28,6 @@ GOTO="end_del_part_nodes"
+ LABEL="del_part_nodes"
+ IMPORT{db}="DM_DEL_PART_NODES"
+ ENV{DM_DEL_PART_NODES}!="1", ENV{DM_DEL_PART_NODES}="1", \
+-	RUN+="/usr/sbin/partx -d --nr 1-1024 $env{DEVNAME}"
++	RUN+="/usr/bin/partx -d --nr 1-1024 $env{DEVNAME}"
+ 
+ LABEL="end_del_part_nodes"
