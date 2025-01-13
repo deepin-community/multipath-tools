@@ -2,17 +2,42 @@ Source: multipath-tools
 Section: admin
 Priority: optional
 Maintainer: Debian DM Multipath Team <team+linux-blocks@tracker.debian.org>
-Uploaders: Guido Günther <agx@sigxcpu.org>, Ritesh Raj Sarraf <rrs@debian.org>, Chris Hofstaedtler <zeha@debian.org>
-Build-Depends: debhelper-compat (= 9), po-debconf, libdevmapper-dev, libreadline-dev, libaio-dev, libudev-dev, libsystemd-dev, systemd, liburcu-dev, pkg-config, libjson-c-dev
+Uploaders:
+ Guido Günther <agx@sigxcpu.org>,
+ Ritesh Raj Sarraf <rrs@debian.org>,
+ Chris Hofstaedtler <zeha@debian.org>,
+Build-Depends:
+ debhelper-compat (= 13),
+ libaio-dev,
+ libdevmapper-dev,
+ libedit-dev,
+ libmount-dev,
+ libjson-c-dev,
+ libsystemd-dev,
+ libudev-dev,
+ liburcu-dev,
+ pkgconf,
+ systemd-dev,
 Vcs-Git: https://salsa.debian.org/linux-blocks-team/multipath-tools.git
 Vcs-Browser: https://salsa.debian.org/linux-blocks-team/multipath-tools
 Standards-Version: 3.9.8
 Homepage: http://christophe.varoqui.free.fr/
+Rules-Requires-Root: no
 
 Package: multipath-tools
 Architecture: linux-any
-Depends: ${shlibs:Depends}, ${misc:Depends}, udev, kpartx (>= ${binary:Version}), lsb-base, libaio1, sg3-utils-udev
-Suggests: multipath-tools-boot
+Depends:
+ kpartx (>= ${binary:Version}),
+ sg3-utils-udev,
+ udev,
+# need systemd >= 245 for modprobe@dm_multipath.service
+ systemd (>= 245~),
+ ${misc:Depends},
+ ${shlibs:Depends},
+Pre-Depends:
+ ${misc:Pre-Depends},
+Suggests:
+ multipath-tools-boot,
 Description: maintain multipath block device access
  These tools are in charge of maintaining the disk multipath device maps and
  react to path and map events.
@@ -22,7 +47,12 @@ Description: maintain multipath block device access
 
 Package: kpartx
 Architecture: linux-any
-Depends: ${shlibs:Depends}, ${misc:Depends}, udev, dmsetup
+Depends:
+# need dmsetup >= 2:1.02.196-1 to get non-broken DM_UDEV_RULES_VSN in their udev rules
+ dmsetup (>= 2:1.02.196-1~),
+ udev,
+ ${misc:Depends},
+ ${shlibs:Depends},
 Description: create device mappings for partitions
  Kpartx can be used to set up device mappings for the partitions of any
  partitioned block device.
@@ -32,8 +62,13 @@ Description: create device mappings for partitions
 
 Package: multipath-tools-boot
 Architecture: all
-Depends: ${misc:Depends}, initramfs-tools | linux-initramfs-tool, lsb-base,
- multipath-tools (>= ${source:Version}), multipath-tools (<< ${source:Version}.1~)
+Depends:
+ initramfs-tools | linux-initramfs-tool,
+ multipath-tools (<< ${source:Version}.1~),
+ multipath-tools (>= ${source:Version}),
+ ${misc:Depends},
+Pre-Depends:
+ ${misc:Pre-Depends},
 Description: Support booting from multipath devices
  This package contains the necessary support for booting from a multipath
  device:
@@ -47,7 +82,11 @@ Description: Support booting from multipath devices
 Package: multipath-udeb
 Package-Type: udeb
 Architecture: linux-any
-Depends: ${shlibs:Depends}, ${misc:Depends}, multipath-modules, kpartx-udeb
+Depends:
+ kpartx-udeb,
+ multipath-modules,
+ ${misc:Depends},
+ ${shlibs:Depends},
 Section: debian-installer
 Description: maintain multipath block device access - udeb package
  This is a udeb, or a microdeb, for the debian-installer.
@@ -58,7 +97,9 @@ Description: maintain multipath block device access - udeb package
 Package: kpartx-udeb
 Package-Type: udeb
 Architecture: linux-any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
 Section: debian-installer
 Description: create device mappings for partitions - udeb package
  This is a udeb, or a microdeb, for the debian-installer.

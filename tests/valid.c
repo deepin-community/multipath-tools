@@ -25,12 +25,17 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <cmocka.h>
+#include <sys/sysmacros.h>
+
 #include "globals.c"
 #include "util.h"
 #include "discovery.h"
 #include "wwids.h"
 #include "blacklist.h"
+#include "foreign.h"
 #include "valid.h"
+
+#define PATHINFO_REAL 9999
 
 int test_fd;
 struct udev_device {
@@ -57,11 +62,6 @@ int __wrap___mpath_connect(int nonblocking)
 	return -1;
 }
 
-int __wrap_systemd_service_enabled(const char *dev)
-{
-	return (int)mock_type(bool);
-}
-
 /* There's no point in checking the return value here */
 int __wrap_mpath_disconnect(int fd)
 {
@@ -78,12 +78,79 @@ struct udev_device *__wrap_udev_device_new_from_subsystem_sysname(struct udev *u
 	return NULL;
 }
 
+/* For devtype check */
+const char *__wrap_udev_device_get_property_value(struct udev_device *udev_device, const char *property)
+{
+	check_expected(property);
+	return mock_ptr_type(char *);
+}
+
+/* For the "hidden" check in pathinfo() */
+const char *__wrap_udev_device_get_sysattr_value(struct udev_device *udev_device,
+					 const char *sysattr)
+{
+	check_expected(sysattr);
+	return mock_ptr_type(char *);
+}
+
+/* For pathinfo() -> is_claimed_by_foreign() */
+int __wrap_add_foreign(struct udev_device *udev_device)
+{
+	return mock_type(int);
+}
+
+/* For is_device_used() */
+const char *__wrap_udev_device_get_sysname(struct udev_device *udev_device)
+{
+	return mock_ptr_type(char *);
+}
+
+/* called from pathinfo() */
+int __wrap_filter_devnode(struct config *conf, const struct _vector *elist,
+			  const char *vendor, const char * product, const char *dev)
+{
+	return mock_type(int);
+}
+
+/* called from pathinfo() */
+int __wrap_filter_device(const struct _vector *blist, const struct _vector *elist,
+	       const char *vendor, const char * product, const char *dev)
+{
+	return mock_type(int);
+}
+
+/* for common_sysfs_pathinfo() */
+dev_t __wrap_udev_device_get_devnum(struct udev_device *ud)
+{
+	return  mock_type(dev_t);
+}
+
+/* for common_sysfs_pathinfo() */
+int __wrap_sysfs_get_size(struct path *pp, unsigned long long * size)
+{
+	return mock_type(int);
+}
+
+/* called in pathinfo() before filter_property() */
+int __wrap_select_getuid(struct config *conf, struct path *pp)
+{
+	pp->uid_attribute = mock_ptr_type(char *);
+	return 0;
+}
+
+int __real_pathinfo(struct path *pp, struct config *conf, int mask);
+
 int __wrap_pathinfo(struct path *pp, struct config *conf, int mask)
 {
 	int ret = mock_type(int);
+
 	assert_string_equal(pp->dev, mock_ptr_type(char *));
 	assert_int_equal(mask, DI_SYSFS | DI_WWID | DI_BLACKLIST);
-	if (ret == PATHINFO_OK) {
+	if (ret == PATHINFO_REAL) {
+		/* for test_filter_property() */
+		ret =  __real_pathinfo(pp, conf, mask);
+		return ret;
+	} else if (ret == PATHINFO_OK) {
 		pp->uid_attribute = "ID_TEST";
 		strlcpy(pp->wwid, mock_ptr_type(char *), WWID_SIZE);
 	} else
@@ -104,6 +171,11 @@ int __wrap_is_failed_wwid(const char *wwid)
 	int ret = mock_type(int);
 	assert_string_equal(wwid, mock_ptr_type(char *));
 	return ret;
+}
+
+const char *__wrap_udev_device_get_syspath(struct udev_device *udevice)
+{
+	return mock_ptr_type(char *);
 }
 
 int __wrap_check_wwids_file(char *wwid, int write_wwid)
@@ -128,6 +200,7 @@ enum {
 	STAGE_IS_MULTIPATHED,
 	STAGE_CHECK_MULTIPATHD,
 	STAGE_GET_UDEV_DEVICE,
+	STAGE_PATHINFO_REAL,
 	STAGE_PATHINFO,
 	STAGE_FILTER_PROPERTY,
 	STAGE_IS_FAILED,
@@ -138,7 +211,6 @@ enum {
 enum {
 	CHECK_MPATHD_RUNNING,
 	CHECK_MPATHD_EAGAIN,
-	CHECK_MPATHD_ENABLED,
 	CHECK_MPATHD_SKIP,
 };
 
@@ -154,29 +226,45 @@ static void setup_passing(char *name, char *wwid, unsigned int check_multipathd,
 	else if (check_multipathd == CHECK_MPATHD_EAGAIN) {
 		will_return(__wrap___mpath_connect, false);
 		will_return(__wrap___mpath_connect, EAGAIN);
-	} else if (check_multipathd == CHECK_MPATHD_ENABLED) {
-		will_return(__wrap___mpath_connect, false);
-		will_return(__wrap___mpath_connect, ECONNREFUSED);
-		will_return(__wrap_systemd_service_enabled, true);
 	}
+
 	/* nothing for CHECK_MPATHD_SKIP */
 	if (stage == STAGE_CHECK_MULTIPATHD)
 		return;
 	will_return(__wrap_udev_device_new_from_subsystem_sysname, true);
 	will_return(__wrap_udev_device_new_from_subsystem_sysname,
 		    name);
+	expect_string(__wrap_udev_device_get_property_value, property, "DEVTYPE");
+	will_return(__wrap_udev_device_get_property_value, "disk");
 	if (stage == STAGE_GET_UDEV_DEVICE)
 		return;
+	if  (stage == STAGE_PATHINFO_REAL) {
+		/* special case for test_filter_property() */
+		will_return(__wrap_pathinfo, PATHINFO_REAL);
+		will_return(__wrap_pathinfo, name);
+		expect_string(__wrap_udev_device_get_sysattr_value,
+			      sysattr, "hidden");
+		will_return(__wrap_udev_device_get_sysattr_value, NULL);
+		will_return(__wrap_add_foreign, FOREIGN_IGNORED);
+		will_return(__wrap_filter_devnode, MATCH_NOTHING);
+		will_return(__wrap_udev_device_get_devnum, makedev(259, 0));
+		will_return(__wrap_sysfs_get_size, 0);
+		will_return(__wrap_select_getuid, "ID_TEST");
+		return;
+	}
 	will_return(__wrap_pathinfo, PATHINFO_OK);
 	will_return(__wrap_pathinfo, name);
 	will_return(__wrap_pathinfo, wwid);
 	if (stage == STAGE_PATHINFO)
 		return;
-	will_return(__wrap_filter_property, MATCH_PROPERTY_BLIST_EXCEPT);
 	if (stage == STAGE_FILTER_PROPERTY)
 		return;
 	will_return(__wrap_is_failed_wwid, WWID_IS_NOT_FAILED);
 	will_return(__wrap_is_failed_wwid, wwid);
+	/* avoid real is_device_in_use() check */
+	if (conf.find_multipaths == FIND_MULTIPATHS_GREEDY ||
+	    conf.find_multipaths == FIND_MULTIPATHS_SMART)
+		will_return(__wrap_udev_device_get_syspath, NULL);
 	if (stage == STAGE_IS_FAILED)
 		return;
 	will_return(__wrap_check_wwids_file, false);
@@ -220,7 +308,7 @@ static void test_sysfs_is_multipathed(void **state)
 
 	memset(&pp, 0, sizeof(pp));
 	conf.find_multipaths = FIND_MULTIPATHS_STRICT;
-	/* test for already existing multiapthed device */
+	/* test for already existing multipathed device */
 	will_return(__wrap_sysfs_is_multipathed, true);
 	will_return(__wrap_sysfs_is_multipathed, wwid);
 	assert_int_equal(is_path_valid(name, &conf, &pp, true),
@@ -245,18 +333,9 @@ static void test_check_multipathd(void **state)
 	will_return(__wrap_sysfs_is_multipathed, false);
 	will_return(__wrap___mpath_connect, false);
 	will_return(__wrap___mpath_connect, ECONNREFUSED);
-	will_return(__wrap_systemd_service_enabled, false);
+
 	assert_int_equal(is_path_valid(name, &conf, &pp, true),
 			 PATH_IS_NOT_VALID);
-	assert_string_equal(pp.dev, name);
-	/* test pass because service is enabled. fail getting udev */
-	memset(&pp, 0, sizeof(pp));
-	setup_passing(name, NULL, CHECK_MPATHD_ENABLED, STAGE_CHECK_MULTIPATHD);
-	will_return(__wrap_udev_device_new_from_subsystem_sysname, false);
-	will_return(__wrap_udev_device_new_from_subsystem_sysname,
-		    name);
-	assert_int_equal(is_path_valid(name, &conf, &pp, true),
-			 PATH_IS_ERROR);
 	assert_string_equal(pp.dev, name);
 	/* test pass because connect returned EAGAIN. fail getting udev */
 	setup_passing(name, NULL, CHECK_MPATHD_EAGAIN, STAGE_CHECK_MULTIPATHD);
@@ -273,6 +352,30 @@ static void test_check_multipathd(void **state)
 		    name);
 	assert_int_equal(is_path_valid(name, &conf, &pp, true),
 			 PATH_IS_ERROR);
+	assert_string_equal(pp.dev, name);
+
+	/* test pass because connect succeeded. succeed getting udev. Wrong DEVTYPE  */
+	memset(&pp, 0, sizeof(pp));
+	setup_passing(name, NULL, CHECK_MPATHD_RUNNING, STAGE_CHECK_MULTIPATHD);
+	will_return(__wrap_udev_device_new_from_subsystem_sysname, true);
+	will_return(__wrap_udev_device_new_from_subsystem_sysname,
+		    name);
+	expect_string(__wrap_udev_device_get_property_value, property, "DEVTYPE");
+	will_return(__wrap_udev_device_get_property_value, "partition");
+	assert_int_equal(is_path_valid(name, &conf, &pp, true),
+			 PATH_IS_NOT_VALID);
+	assert_string_equal(pp.dev, name);
+
+	/* test pass because connect succeeded. succeed getting udev. Bad DEVTYPE  */
+	memset(&pp, 0, sizeof(pp));
+	setup_passing(name, NULL, CHECK_MPATHD_RUNNING, STAGE_CHECK_MULTIPATHD);
+	will_return(__wrap_udev_device_new_from_subsystem_sysname, true);
+	will_return(__wrap_udev_device_new_from_subsystem_sysname,
+		    name);
+	expect_string(__wrap_udev_device_get_property_value, property, "DEVTYPE");
+	will_return(__wrap_udev_device_get_property_value, NULL);
+	assert_int_equal(is_path_valid(name, &conf, &pp, true),
+			 PATH_IS_NOT_VALID);
 	assert_string_equal(pp.dev, name);
 }
 
@@ -317,24 +420,24 @@ static void test_filter_property(void **state)
 	/* test blacklist property */
 	memset(&pp, 0, sizeof(pp));
 	conf.find_multipaths = FIND_MULTIPATHS_STRICT;
-	setup_passing(name, wwid, CHECK_MPATHD_SKIP, STAGE_PATHINFO);
+	setup_passing(name, wwid, CHECK_MPATHD_SKIP, STAGE_PATHINFO_REAL);
 	will_return(__wrap_filter_property, MATCH_PROPERTY_BLIST);
 	assert_int_equal(is_path_valid(name, &conf, &pp, false),
 			 PATH_IS_NOT_VALID);
 	assert_ptr_equal(pp.udev, &test_udev);
-	assert_string_equal(pp.wwid, wwid);
+
 	/* test missing property */
 	memset(&pp, 0, sizeof(pp));
-	setup_passing(name, wwid, CHECK_MPATHD_SKIP, STAGE_PATHINFO);
+	setup_passing(name, wwid, CHECK_MPATHD_SKIP, STAGE_PATHINFO_REAL);
 	will_return(__wrap_filter_property, MATCH_PROPERTY_BLIST_MISSING);
 	assert_int_equal(is_path_valid(name, &conf, &pp, false),
 			 PATH_IS_NOT_VALID);
-	/* test MATCH_NOTHING fail on is_failed_wwid */
+
+	/* test MATCH_NOTHING fail on filter_device */
 	memset(&pp, 0, sizeof(pp));
-	setup_passing(name, wwid, CHECK_MPATHD_SKIP, STAGE_PATHINFO);
+	setup_passing(name, wwid, CHECK_MPATHD_SKIP, STAGE_PATHINFO_REAL);
 	will_return(__wrap_filter_property, MATCH_NOTHING);
-	will_return(__wrap_is_failed_wwid, WWID_IS_FAILED);
-	will_return(__wrap_is_failed_wwid, wwid);
+	will_return(__wrap_filter_device, MATCH_DEVICE_BLIST);
 	assert_int_equal(is_path_valid(name, &conf, &pp, false),
 			 PATH_IS_NOT_VALID);
 }
@@ -379,7 +482,7 @@ static void test_greedy(void **state)
 	assert_string_equal(pp.dev, name);
 	assert_ptr_equal(pp.udev, &test_udev);
 	assert_string_equal(pp.wwid, wwid);
-	/* test greedy success without checking multiapthd */
+	/* test greedy success without checking multipathd */
 	memset(&pp, 0, sizeof(pp));
 	setup_passing(name, wwid, CHECK_MPATHD_SKIP, STAGE_IS_FAILED);
 	assert_int_equal(is_path_valid(name, &conf, &pp, false),
@@ -412,7 +515,7 @@ static void test_check_uuid_present(void **state)
 
 	memset(&pp, 0, sizeof(pp));
 	conf.find_multipaths = FIND_MULTIPATHS_STRICT;
-	setup_passing(name, wwid, CHECK_MPATHD_ENABLED, STAGE_CHECK_WWIDS);
+	setup_passing(name, wwid, CHECK_MPATHD_RUNNING, STAGE_CHECK_WWIDS);
 	will_return(__wrap_dm_map_present_by_uuid, 1);
 	will_return(__wrap_dm_map_present_by_uuid, wwid);
 	assert_int_equal(is_path_valid(name, &conf, &pp, true),
@@ -481,6 +584,8 @@ int test_valid(void)
 int main(void)
 {
 	int ret = 0;
+
+	init_test_verbosity(-1);
 	ret += test_valid();
 	return ret;
 }

@@ -1,0 +1,10 @@
+udeb/usr/lib/modules-load.d/multipath.conf
+deb/usr/lib/libmpathvalid.so*
+udeb/usr/lib/libmpathvalid.so*
+deb/usr/include/mpath_valid.h
+udeb/usr/include/mpath_valid.h
+udeb/usr/lib/libmpathpersist.so.0
+udeb/usr/sbin/mpathpersist
+udeb/usr/sbin/multipathc
+udeb/usr/sbin/multipathd
+udeb/usr/lib/tmpfiles.d/multipath.conf

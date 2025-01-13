@@ -1,9 +1,13 @@
 #
 # Copyright (C) 2003 Christophe Varoqui, <christophe.varoqui@opensvc.com>
 #
+TOPDIR = ../..
 include ../../Makefile.inc
 
-CFLAGS += $(LIB_CFLAGS) -I..
+CPPFLAGS +=  -I$(multipathdir) -I$(mpathutildir)
+CFLAGS += $(LIB_CFLAGS)
+LDFLAGS += -L$(multipathdir) -L$(mpathutildir)
+LIBDEPS = -lmultipath -lmpathutil -laio -lpthread -lrt
 
 # If you add or remove a checker also update multipath/multipath.conf.5
 LIBS= \
@@ -17,20 +21,17 @@ LIBS= \
 
 all: $(LIBS)
 
-libcheckdirectio.so: directio.o
-	$(CC) $(LDFLAGS) $(SHARED_FLAGS) -o $@ $^ -laio
-
 libcheck%.so: %.o
-	$(CC) $(LDFLAGS) $(SHARED_FLAGS) -o $@ $^
+	$(Q)$(CC) $(LDFLAGS) $(SHARED_FLAGS) -o $@ $^ $(LIBDEPS)
 
 install:
-	$(INSTALL_PROGRAM) -m 755 $(LIBS) $(DESTDIR)$(libdir)
+	$(Q)$(INSTALL_PROGRAM) -m 755 $(LIBS) $(DESTDIR)$(plugindir)
 
 uninstall:
-	for file in $(LIBS); do $(RM) $(DESTDIR)$(libdir)/$$file; done
+	$(Q)for file in $(LIBS); do $(RM) $(DESTDIR)$(plugindir)/$$file; done
 
 clean: dep_clean
-	$(RM) core *.a *.o *.gz *.so
+	$(Q)$(RM) core *.a *.o *.gz *.so
 
 OBJS := $(LIBS:libcheck%.so=%.o)
 .SECONDARY: $(OBJS)
@@ -38,4 +39,4 @@ OBJS := $(LIBS:libcheck%.so=%.o)
 include $(wildcard $(OBJS:.o=.d))
 
 dep_clean:
-	$(RM) $(OBJS:.o=.d)
+	$(Q)$(RM) $(OBJS:.o=.d)

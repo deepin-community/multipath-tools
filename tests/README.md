@@ -13,6 +13,11 @@ If valgrind detects a bad memory access or leak, the test will fail. The
 output of the test run, including valgrind output, is stored as
 `<testname>.vgr`.
 
+## Controlling verbosity for unit tests
+
+Some test programs use the environment variable `MPATHTEST_VERBOSITY` to
+control the log level during test execution.
+
 ## Notes on individual tests
 
 ### Tests that require root permissions
@@ -33,7 +38,7 @@ device will be opened in read-only mode; you don't need to worry about data
 loss. However, the user needs to specify a device to be used. Set the
 environment variable `DIO_TEST_DEV` to the path of the device.
 Alternatively, create a file `directio_test_dev` under
-the `tests` directory containting a single line that sets this environment
+the `tests` directory containing a single line that sets this environment
 variable in Bourne Shell syntax, like this:
 
     DIO_TEST_DEV=/dev/sdc3
@@ -59,7 +64,7 @@ to wrap a function which is both defined in libmultipath and called from other
 functions in libmultipath, such as `checker_check()`. When `libmultipath.so` is
 created, the linker resolves calls to `checker_check()` inside the `.so`
 file. When later the test executable is built by linking the test object file with
-`libmultipath.so`, these calls can't be wrapped any more, because they've
+`libmultipath.so`, these calls can't be wrapped anymore, because they've
 already been resolved, and wrapping works only for *unresolved* symbols.
 Therefore, object files from libraries that contain calls to functions
 which need to be wrapped must be explicitly listed on the linker command line

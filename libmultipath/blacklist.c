@@ -2,10 +2,11 @@
  * Copyright (c) 2004, 2005 Christophe Varoqui
  */
 #include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <libudev.h>
 
 #include "checkers.h"
-#include "memory.h"
 #include "vector.h"
 #include "util.h"
 #include "debug.h"
@@ -14,6 +15,7 @@
 #include "blacklist.h"
 #include "structs_vec.h"
 #include "print.h"
+#include "strbuf.h"
 
 char *check_invert(char *str, bool *invert)
 {
@@ -45,7 +47,7 @@ int store_ble(vector blist, const char *str, int origin)
 	if (!blist)
 		goto out;
 
-	ble = MALLOC(sizeof(struct blentry));
+	ble = calloc(1, sizeof(struct blentry));
 
 	if (!ble)
 		goto out;
@@ -62,9 +64,9 @@ int store_ble(vector blist, const char *str, int origin)
 	vector_set_slot(blist, ble);
 	return 0;
 out1:
-	FREE(ble);
+	free(ble);
 out:
-	FREE(strdup_str);
+	free(strdup_str);
 	return 1;
 }
 
@@ -76,12 +78,12 @@ int alloc_ble_device(vector blist)
 	if (!blist)
 		return 1;
 
-	ble = MALLOC(sizeof(struct blentry_device));
+	ble = calloc(1, sizeof(struct blentry_device));
 	if (!ble)
 		return 1;
 
 	if (!vector_alloc_slot(blist)) {
-		FREE(ble);
+		free(ble);
 		return 1;
 	}
 	vector_set_slot(blist, ble);
@@ -104,7 +106,7 @@ int set_ble_device(vector blist, const char *vendor, const char *product, int or
 		return 1;
 
 	if (vendor) {
-		vendor_str = STRDUP(vendor);
+		vendor_str = strdup(vendor);
 		if (!vendor_str)
 			goto out;
 
@@ -115,7 +117,7 @@ int set_ble_device(vector blist, const char *vendor, const char *product, int or
 		ble->vendor = vendor_str;
 	}
 	if (product) {
-		product_str = STRDUP(product);
+		product_str = strdup(product);
 		if (!product_str)
 			goto out1;
 
@@ -191,6 +193,27 @@ find_blacklist_device (const struct _vector *blist, const char *vendor,
 	return 0;
 }
 
+/*
+ * Test if nvme native multipath is enabled. If the sysfs file can't
+ * be accessed, multipath is either disabled at compile time, or no
+ * nvme driver is loaded at all. Thus treat errors as "no".
+ */
+static bool nvme_multipath_enabled(void)
+{
+	static const char fn[] = "/sys/module/nvme_core/parameters/multipath";
+	int fd, len;
+	char buf[2];
+
+	fd = open(fn, O_RDONLY);
+	if (fd == -1)
+		return false;
+
+	len = read(fd, buf, sizeof(buf));
+	close(fd);
+
+	return (len >= 1 && buf[0] == 'Y');
+}
+
 int
 setup_default_blist (struct config * conf)
 {
@@ -198,9 +221,15 @@ setup_default_blist (struct config * conf)
 	struct hwentry *hwe;
 	int i;
 
-	if (store_ble(conf->blist_devnode, "!^(sd[a-z]|dasd[a-z]|nvme[0-9])", ORIGIN_DEFAULT))
-		return 1;
-
+	if (nvme_multipath_enabled()) {
+		if (store_ble(conf->blist_devnode, "!^(sd[a-z]|dasd[a-z])",
+			      ORIGIN_DEFAULT))
+			return 1;
+	} else {
+		if (store_ble(conf->blist_devnode, "!^(sd[a-z]|dasd[a-z]|nvme[0-9])",
+			      ORIGIN_DEFAULT))
+			return 1;
+	}
 	if (store_ble(conf->elist_property, "(SCSI_IDENT_|ID_WWN)", ORIGIN_DEFAULT))
 		return 1;
 
@@ -215,7 +244,7 @@ setup_default_blist (struct config * conf)
 					  VECTOR_SIZE(conf->blist_device) - 1);
 			if (set_ble_device(conf->blist_device, hwe->vendor, hwe->bl_product,
 					   ORIGIN_DEFAULT)) {
-				FREE(ble);
+				free(ble);
 				vector_del_slot(conf->blist_device, VECTOR_SIZE(conf->blist_device) - 1);
 				return 1;
 			}
@@ -341,19 +370,21 @@ int
 filter_protocol(const struct _vector *blist, const struct _vector *elist,
 		const struct path *pp)
 {
-	char buf[PROTOCOL_BUF_SIZE];
+	STRBUF_ON_STACK(buf);
+	const char *prot;
 	int r = MATCH_NOTHING;
 
 	if (pp) {
-		snprint_path_protocol(buf, sizeof(buf), pp);
+		snprint_path_protocol(&buf, pp);
+		prot = get_strbuf_str(&buf);
 
-		if (match_reglist(elist, buf))
+		if (match_reglist(elist, prot))
 			r = MATCH_PROTOCOL_BLIST_EXCEPT;
-		else if (match_reglist(blist, buf))
+		else if (match_reglist(blist, prot))
 			r = MATCH_PROTOCOL_BLIST;
+		log_filter(pp->dev, NULL, NULL, NULL, NULL, prot, r, 3);
 	}
 
-	log_filter(pp->dev, NULL, NULL, NULL, NULL, buf, r, 3);
 	return r;
 }
 
@@ -442,8 +473,8 @@ static void free_ble(struct blentry *ble)
 	if (!ble)
 		return;
 	regfree(&ble->regex);
-	FREE(ble->str);
-	FREE(ble);
+	free(ble->str);
+	free(ble);
 }
 
 void
@@ -485,13 +516,13 @@ static void free_ble_device(struct blentry_device *ble)
 	if (ble) {
 		if (ble->vendor) {
 			regfree(&ble->vendor_reg);
-			FREE(ble->vendor);
+			free(ble->vendor);
 		}
 		if (ble->product) {
 			regfree(&ble->product_reg);
-			FREE(ble->product);
+			free(ble->product);
 		}
-		FREE(ble);
+		free(ble);
 	}
 }
 

@@ -11,7 +11,6 @@
 struct path;
 
 #include "list.h"
-#include "memory.h"
 #include "defaults.h"
 
 /*
@@ -50,16 +49,15 @@ struct prio {
 	struct list_head node;
 	char name[PRIO_NAME_LEN];
 	char args[PRIO_ARGS_LEN];
-	int (*getprio)(struct path *, char *, unsigned int);
+	int (*getprio)(struct path *, char *);
 };
 
-unsigned int get_prio_timeout(unsigned int checker_timeout,
-			      unsigned int default_timeout);
-int init_prio (char *);
+unsigned int get_prio_timeout_ms(const struct path *);
+int init_prio(void);
 void cleanup_prio (void);
-struct prio * add_prio (char *, char *);
-int prio_getprio (struct prio *, struct path *, unsigned int);
-void prio_get (char *, struct prio *, char *, char *);
+struct prio * add_prio (const char *);
+int prio_getprio (struct prio *, struct path *);
+void prio_get (struct prio *, const char *, const char *);
 void prio_put (struct prio *);
 int prio_selected (const struct prio *);
 const char * prio_name (const struct prio *);
@@ -67,6 +65,6 @@ const char * prio_args (const struct prio *);
 int prio_set_args (struct prio *, const char *);
 
 /* The only function exported by prioritizer dynamic libraries (.so) */
-int getprio(struct path *, char *, unsigned int);
+int getprio(struct path *, char *);
 
 #endif /* _PRIO_H */

@@ -13,7 +13,6 @@
 
 #include "util.h"
 #include "vector.h"
-#include "memory.h"
 #include "checkers.h"
 #include "config.h"
 #include "structs.h"
@@ -25,15 +24,14 @@
 #include "main.h"
 
 pthread_attr_t waiter_attr;
-struct mutex_lock waiter_lock = { .mutex = PTHREAD_MUTEX_INITIALIZER };
+static pthread_mutex_t waiter_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static struct event_thread *alloc_waiter (void)
 {
 
 	struct event_thread *wp;
 
-	wp = (struct event_thread *)MALLOC(sizeof(struct event_thread));
-	memset(wp, 0, sizeof(struct event_thread));
+	wp = (struct event_thread *)calloc(1, sizeof(struct event_thread));
 
 	return wp;
 }
@@ -46,7 +44,7 @@ static void free_waiter (void *data)
 		dm_task_destroy(wp->dmt);
 
 	rcu_unregister_thread();
-	FREE(wp);
+	free(wp);
 }
 
 void stop_waiter_thread (struct multipath *mpp)
@@ -67,11 +65,11 @@ void stop_waiter_thread (struct multipath *mpp)
 		(unsigned long)mpp->waiter);
 	thread = mpp->waiter;
 	mpp->waiter = (pthread_t)0;
-	pthread_cleanup_push(cleanup_lock, &waiter_lock);
-	lock(&waiter_lock);
+	pthread_cleanup_push(cleanup_mutex, &waiter_lock);
+	pthread_mutex_lock(&waiter_lock);
 	pthread_kill(thread, SIGUSR2);
 	pthread_cancel(thread);
-	lock_cleanup_pop(&waiter_lock);
+	pthread_cleanup_pop(1);
 }
 
 /*
@@ -118,7 +116,7 @@ static int waiteventloop (struct event_thread *waiter)
 	pthread_sigmask(SIG_UNBLOCK, &set, &oldset);
 
 	pthread_testcancel();
-	r = dm_task_run(waiter->dmt);
+	r = libmp_dm_task_run(waiter->dmt);
 	if (!r)
 		dm_log_error(2, DM_DEVICE_WAITEVENT, waiter->dmt);
 	pthread_testcancel();
@@ -128,10 +126,10 @@ static int waiteventloop (struct event_thread *waiter)
 	waiter->dmt = NULL;
 
 	if (!r)	{ /* wait interrupted by signal. check for cancellation */
-		pthread_cleanup_push(cleanup_lock, &waiter_lock);
-		lock(&waiter_lock);
+		pthread_cleanup_push(cleanup_mutex, &waiter_lock);
+		pthread_mutex_lock(&waiter_lock);
 		pthread_testcancel();
-		lock_cleanup_pop(&waiter_lock);
+		pthread_cleanup_pop(1);
 		return 1; /* If we weren't cancelled, just reschedule */
 	}
 
@@ -158,7 +156,7 @@ static int waiteventloop (struct event_thread *waiter)
 		pthread_cleanup_push(cleanup_lock, &waiter->vecs->lock);
 		lock(&waiter->vecs->lock);
 		pthread_testcancel();
-		r = update_multipath(waiter->vecs, waiter->mapname, 1);
+		r = update_multipath(waiter->vecs, waiter->mapname);
 		lock_cleanup_pop(waiter->vecs->lock);
 
 		if (r) {

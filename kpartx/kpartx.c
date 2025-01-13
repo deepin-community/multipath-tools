@@ -34,6 +34,7 @@
 #include <ctype.h>
 #include <libdevmapper.h>
 
+#include "autoconfig.h"
 #include "devmapper.h"
 #include "crc32.h"
 #include "lopart.h"
@@ -359,9 +360,7 @@ main(int argc, char **argv){
 			exit (0);
 
 		if (!loopdev) {
-			loopdev = find_unused_loop_device();
-
-			if (set_loop(loopdev, rpath, 0, &ro)) {
+			if (set_loop(&loopdev, rpath, 0, &ro)) {
 				fprintf(stderr, "can't set up loop\n");
 				exit (1);
 			}
@@ -424,7 +423,7 @@ main(int argc, char **argv){
 					fprintf(stderr, "can't del loop : %s\n",
 					       loopdev);
 				r = 1;
-			} else
+			} else if (verbose)
 				fprintf(stderr, "loop deleted : %s\n", loopdev);
 		}
 		goto end;
@@ -443,12 +442,7 @@ main(int argc, char **argv){
 		if (n >= 0)
 			printf("%s: %d slices\n", ptp->type, n);
 #endif
-
-		if (n > 0) {
-			close(fd);
-			fd = -1;
-		}
-		else
+		if (n <= 0)
 			continue;
 
 		switch(what) {
@@ -668,20 +662,20 @@ main(int argc, char **argv){
 		if (n > 0)
 			break;
 	}
-	if (what == LIST && loopcreated && S_ISREG (buf.st_mode)) {
-		if (fd != -1)
-			close(fd);
+	if (fd != -1)
+		close(fd);
+	if (what == LIST && loopcreated) {
 		if (del_loop(device)) {
 			if (verbose)
-				printf("can't del loop : %s\n",
+				fprintf(stderr, "can't del loop : %s\n",
 					device);
 			exit(1);
 		}
-		printf("loop deleted : %s\n", device);
+		if (verbose)
+			fprintf(stderr, "loop deleted : %s\n", device);
 	}
 
 end:
-	dm_lib_release();
 	dm_lib_exit();
 
 	return r;
@@ -766,6 +760,8 @@ getblock (int fd, unsigned int blknr) {
 	if (read(fd, bp->block, secsz) != secsz) {
 		fprintf(stderr, "read error, sector %d\n", secnr);
 		blockhead = bp->next;
+		free(bp->block);
+		free(bp);
 		return NULL;
 	}
 

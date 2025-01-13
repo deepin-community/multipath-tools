@@ -1,4 +1,6 @@
-/usr/share/man/man8/kpartx.8.gz
-/sbin/kpartx
-/lib/udev/kpartx_id
-/lib/udev/dmsetup_env
+deb/usr/lib/udev/kpartx_id usr/lib/udev/
+deb/usr/lib/udev/rules.d/56-dm-parts.rules usr/lib/udev/rules.d/
+deb/usr/lib/udev/rules.d/60-kpartx.rules usr/lib/udev/rules.d/
+deb/usr/lib/udev/rules.d/68-del-part-nodes.rules usr/lib/udev/rules.d/
+deb/usr/sbin/kpartx usr/sbin/
+deb/usr/share/man/man8/kpartx.8* usr/share/man/man8/

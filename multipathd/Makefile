@@ -1,69 +1,86 @@
 include ../Makefile.inc
 
-ifneq ($(call check_func,dm_task_get_errno,/usr/include/libdevmapper.h),0)
-	CFLAGS += -DLIBDM_API_GET_ERRNO
-endif
+EXEC     := multipathd
+CLI      := multipathc
+MANPAGES := multipathd.8
+
+CPPFLAGS += -I$(multipathdir) -I$(mpathutildir) -I$(mpathpersistdir) -I$(mpathcmddir) -I$(thirdpartydir) \
+	-DBINDIR='"$(bindir)"' $(SYSTEMD_CPPFLAGS)
 
 #
 # debugging stuff
 #
-#CFLAGS += -DLCKDBG
-#CFLAGS += -D_DEBUG_
-#CFLAGS += -DLOGDBG
-CFLAGS += $(BIN_CFLAGS) -I$(multipathdir) -I$(mpathpersistdir) \
-	  -I$(mpathcmddir) -I$(thirdpartydir)
+#CPPFLAGS += -DLCKDBG
+#CPPFLAGS += -DLOGDBG
+
+CFLAGS += $(BIN_CFLAGS)
 LDFLAGS += $(BIN_LDFLAGS)
-LIBDEPS += -L$(multipathdir) -lmultipath -L$(mpathpersistdir) -lmpathpersist \
-	   -L$(mpathcmddir) -lmpathcmd -ludev -ldl -lurcu -lpthread \
-	   -ldevmapper -lreadline
 
-ifdef SYSTEMD
-	CFLAGS += -DUSE_SYSTEMD=$(SYSTEMD)
-	ifeq ($(shell test $(SYSTEMD) -gt 209 && echo 1), 1)
-		LIBDEPS += -lsystemd
-	else
-		LIBDEPS += -lsystemd-daemon
-	endif
+CLI_LIBDEPS	:=  -L$(mpathutildir) -lmpathutil -L$(mpathcmddir) -lmpathcmd \
+		-ludev -ldl -lurcu -lpthread $(SYSTEMD_LIBDEPS)
+LIBDEPS		:= -L$(multipathdir) -lmultipath -L$(mpathpersistdir) -lmpathpersist \
+	  	-ldevmapper $(CLI_LIBDEPS)
+
+ifeq ($(READLINE),libedit)
+RL_CPPFLAGS	:= -DUSE_LIBEDIT
+RL_LIBDEPS	:= -ledit
+# See comment in multipathc.c
+ifeq ($(shell sed -En 's/.*\<Function\s*\*rl_completion_entry_function;.*/yes/p' /usr/include/editline/readline.h),yes)
+RL_CPPFLAGS += -DBROKEN_RL_COMPLETION_FUNC
 endif
-ifeq ($(ENABLE_DMEVENTS_POLL),0)
-	CFLAGS += -DNO_DMEVENTS_POLL
+endif
+ifeq ($(READLINE),libreadline)
+RL_CPPFLAGS	:= -DUSE_LIBREADLINE
+RL_LIBDEPS	:= -lreadline
 endif
 
-OBJS = main.o pidfile.o uxlsnr.o uxclnt.o cli.o cli_handlers.o waiter.o \
-       dmevents.o
+CLI_OBJS := multipathc.o cli.o
+OBJS := main.o pidfile.o uxlsnr.o uxclnt.o cli.o cli_handlers.o waiter.o \
+       dmevents.o init_unwinder.o
+ifeq ($(FPIN_SUPPORT),1)
+OBJS += fpin_handlers.o
+endif
 
-EXEC = multipathd
-
-all : $(EXEC)
+all : $(EXEC) $(CLI) $(MANPAGES) $(EXEC).service
 
 $(EXEC): $(OBJS) $(multipathdir)/libmultipath.so $(mpathcmddir)/libmpathcmd.so
-	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $(EXEC) $(LIBDEPS)
-	$(GZIP) $(EXEC).8 > $(EXEC).8.gz
+	@echo building $@ because of $?
+	$(Q)$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) -o $(EXEC) $(LIBDEPS)
+
+multipathc.o:	multipathc.c
+	$(Q)$(CC) $(CPPFLAGS) $(RL_CPPFLAGS) $(CFLAGS) -Wno-unused-parameter -c -o $@ $<
+
+$(CLI):  $(CLI_OBJS)
+	@echo building $@ because of $?
+	$(Q)$(CC) $(CFLAGS) $(CLI_OBJS) $(LDFLAGS) -o $@ $(CLI_LIBDEPS) $(RL_LIBDEPS)
 
 cli_handlers.o:	cli_handlers.c
-	$(CC) $(CFLAGS) -Wno-unused-parameter -c -o $@ $<
+	$(Q)$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-unused-parameter -c -o $@ $<
 
 install:
-	$(INSTALL_PROGRAM) -d $(DESTDIR)$(bindir)
-	$(INSTALL_PROGRAM) -m 755 $(EXEC) $(DESTDIR)$(bindir)
+	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(bindir)
+	$(Q)$(INSTALL_PROGRAM) -m 755 $(EXEC) $(DESTDIR)$(bindir)
+	$(Q)$(INSTALL_PROGRAM) -m 755 $(CLI) $(DESTDIR)$(bindir)
 ifdef SYSTEMD
-	$(INSTALL_PROGRAM) -d $(DESTDIR)$(unitdir)
-	$(INSTALL_PROGRAM) -m 644 $(EXEC).service $(DESTDIR)$(unitdir)
-	$(INSTALL_PROGRAM) -m 644 $(EXEC).socket $(DESTDIR)$(unitdir)
+	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(unitdir)
+	$(Q)$(INSTALL_PROGRAM) -m 644 $(EXEC).service $(DESTDIR)$(unitdir)
+	$(Q)$(INSTALL_PROGRAM) -m 644 $(EXEC).socket $(DESTDIR)$(unitdir)
 endif
-	$(INSTALL_PROGRAM) -d $(DESTDIR)$(man8dir)
-	$(INSTALL_PROGRAM) -m 644 $(EXEC).8.gz $(DESTDIR)$(man8dir)
+	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(mandir)/man8
+	$(Q)$(INSTALL_PROGRAM) -m 644 $(EXEC).8 $(DESTDIR)$(mandir)/man8
+	$(Q)$(INSTALL_PROGRAM) -m 644 $(CLI).8 $(DESTDIR)$(mandir)/man8
 
 uninstall:
-	$(RM) $(DESTDIR)$(bindir)/$(EXEC)
-	$(RM) $(DESTDIR)$(man8dir)/$(EXEC).8.gz
-	$(RM) $(DESTDIR)$(unitdir)/$(EXEC).service
-	$(RM) $(DESTDIR)$(unitdir)/$(EXEC).socket
+	$(Q)$(RM) $(DESTDIR)$(bindir)/$(EXEC) $(DESTDIR)$(bindir)/$(CLI)
+	$(Q)$(RM) $(DESTDIR)$(mandir)/man8/$(EXEC).8
+	$(Q)$(RM) $(DESTDIR)$(mandir)/man8/$(CLI).8
+	$(Q)$(RM) $(DESTDIR)$(unitdir)/$(EXEC).service
+	$(Q)$(RM) $(DESTDIR)$(unitdir)/$(EXEC).socket
 
 clean: dep_clean
-	$(RM) core *.o $(EXEC) *.gz
+	$(Q)$(RM) core *.o $(EXEC) $(CLI) $(MANPAGES) $(EXEC).service
 
-include $(wildcard $(OBJS:.o=.d))
+include $(wildcard $(OBJS:.o=.d) $(CLI_OBJS:.o=.d))
 
 dep_clean:
-	$(RM) $(OBJS:.o=.d)
+	$(Q)$(RM) $(OBJS:.o=.d) $(CLI_OBJS:.o=.d)

@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
@@ -19,6 +20,7 @@
 #include "vector.h"
 #include "structs.h"
 #include "discovery.h"
+#include "wrap64.h"
 #include "globals.c"
 
 #define VPD_BUFSIZ 4096
@@ -57,7 +59,7 @@ static const char vendor_id[] = "Linux";
 static const char test_id[] =
 	"A123456789AbcDefB123456789AbcDefC123456789AbcDefD123456789AbcDef";
 
-int __wrap_ioctl(int fd, unsigned long request, void *param)
+int WRAP_IOCTL(int fd, unsigned long request, void *param)
 {
 	int len;
 	struct sg_io_hdr *io_hdr;
@@ -118,7 +120,7 @@ static void hex2bin(unsigned char *dst, const char *src,
 	const char *sc;
 	unsigned char *ds;
 
-	assert(srclen % 2 == 0);
+	assert_true(srclen % 2 == 0);
 	for (sc = src, ds = dst;
 	     sc < src + srclen &&  ds < dst + dstlen;
 	     sc += 2, ++ds)
@@ -291,7 +293,9 @@ static int create_vpd83(unsigned char *buf, size_t bufsiz, const char *id,
 	unsigned char *desc;
 	int n = 0;
 
-	memset(buf, 0, bufsiz);
+	/* Fill with large number, which will cause length overflow */
+	memset(buf, 0xed, bufsiz);
+	buf[0] = 0;
 	buf[1] = 0x83;
 
 	desc = buf + 4;
@@ -425,8 +429,8 @@ static void test_vpd_vnd_ ## len ## _ ## wlen(void **state)             \
 	/* Replace spaces, like code under test */			\
 	exp_subst = subst_spaces(exp_wwid);				\
 	free(exp_wwid);							\
-	will_return(__wrap_ioctl, n);					\
-	will_return(__wrap_ioctl, vt->vpdbuf);				\
+	wrap_will_return(WRAP_IOCTL, n);				\
+	wrap_will_return(WRAP_IOCTL, vt->vpdbuf);			\
 	ret = get_vpd_sgio(10, 0x83, 0, vt->wwid, wlen);		\
 	assert_correct_wwid("test_vpd_vnd_" #len "_" #wlen,		\
 			    exp_len, ret, '1', 0, false,		\
@@ -455,8 +459,8 @@ static void test_vpd_str_ ## typ ## _ ## len ## _ ## wlen(void **state) \
 		exp_len--;						\
 	if (exp_len >= wlen)						\
 		exp_len = wlen - 1;					\
-	will_return(__wrap_ioctl, n);					\
-	will_return(__wrap_ioctl, vt->vpdbuf);				\
+	wrap_will_return(WRAP_IOCTL, n);				\
+	wrap_will_return(WRAP_IOCTL, vt->vpdbuf);			\
 	ret = get_vpd_sgio(10, 0x83, 0, vt->wwid, wlen);		\
 	assert_correct_wwid("test_vpd_str_" #typ "_" #len "_" #wlen,	\
 			    exp_len, ret, byte0[type], 0,		\
@@ -492,12 +496,33 @@ static void test_vpd_naa_ ## naa ## _ ## wlen(void **state)             \
 									\
 	n = create_vpd83(vt->vpdbuf, sizeof(vt->vpdbuf), test_id,	\
 			 3, naa, 0);					\
-	will_return(__wrap_ioctl, n);					\
-	will_return(__wrap_ioctl, vt->vpdbuf);				\
+	wrap_will_return(WRAP_IOCTL, n);				\
+	wrap_will_return(WRAP_IOCTL, vt->vpdbuf);			\
 	ret = get_vpd_sgio(10, 0x83, 0, vt->wwid, wlen);		\
 	assert_correct_wwid("test_vpd_naa_" #naa "_" #wlen,		\
 			    exp_len, ret, '3', '0' + naa, true,		\
 			    test_id, vt->wwid);				\
+}
+
+/**
+ * test_cpd_naa_NAA_badlen_BAD() - test detection of bad length fields
+ * @NAA:	Network Name Authority (2, 3, 5, 16)
+ * @BAD:        Value for designator length field
+ * @ERR:        Expected error code
+ */
+#define make_test_vpd_naa_badlen(NAA, BAD, ERR)			\
+static void test_vpd_naa_##NAA##_badlen_##BAD(void **state)	\
+{								\
+	struct vpdtest *vt = *state;					\
+	int n, ret;							\
+									\
+	n = create_vpd83(vt->vpdbuf, sizeof(vt->vpdbuf), test_id, 3, NAA, 0); \
+									\
+	vt->vpdbuf[7] = BAD;						\
+	wrap_will_return(WRAP_IOCTL, n);				\
+	wrap_will_return(WRAP_IOCTL, vt->vpdbuf);			\
+	ret = get_vpd_sgio(10, 0x83, 0, vt->wwid, 40);			\
+	assert_int_equal(-ret, -ERR);					\
 }
 
 /**
@@ -521,14 +546,39 @@ static void test_vpd_eui_ ## len ## _ ## wlen ## _ ## sml(void **state)	\
 		/* overwrite the page size to DEFAULT_SGIO_LEN + 1 */	\
 		put_unaligned_be16(255, vt->vpdbuf + 2);		\
 		/* this causes get_vpd_sgio to do a second ioctl */	\
-		will_return(__wrap_ioctl, n);				\
-		will_return(__wrap_ioctl, vt->vpdbuf);			\
+		wrap_will_return(WRAP_IOCTL, n);			\
+		wrap_will_return(WRAP_IOCTL, vt->vpdbuf);		\
 	}								\
-	will_return(__wrap_ioctl, n);					\
-	will_return(__wrap_ioctl, vt->vpdbuf);				\
+	wrap_will_return(WRAP_IOCTL, n);				\
+	wrap_will_return(WRAP_IOCTL, vt->vpdbuf);			\
 	ret = get_vpd_sgio(10, 0x83, 0, vt->wwid, wlen);		\
 	assert_correct_wwid("test_vpd_eui_" #len "_" #wlen "_" #sml,	\
 			    exp_len, ret, '2', 0, true,			\
+			    test_id, vt->wwid);				\
+}
+
+/**
+ * test_cpd_eui_LEN_badlen_BAD() - test detection of bad length fields
+ * @NAA:	correct length(8, 12, 16)
+ * @BAD:        value for designator length field
+ * @ERR:        expected error code
+ */
+#define make_test_vpd_eui_badlen(LEN, BAD, ERR)			\
+static void test_vpd_eui_badlen_##LEN##_##BAD(void **state)	\
+{								\
+	struct vpdtest *vt = *state;					\
+	int n, ret;							\
+									\
+	n = create_vpd83(vt->vpdbuf, sizeof(vt->vpdbuf), test_id, 2, 0, LEN); \
+									\
+	vt->vpdbuf[7] = BAD;						\
+	wrap_will_return(WRAP_IOCTL, n);				\
+	wrap_will_return(WRAP_IOCTL, vt->vpdbuf);			\
+	ret = get_vpd_sgio(10, 0x83, 0, vt->wwid, 40);			\
+	assert_int_equal(ret, ERR);					\
+	if (ERR >= 0)							\
+		assert_correct_wwid("test_vpd_eui_badlen_"#LEN"_"#BAD,	\
+			    2 * BAD + 1, ret, '2', 0, true,		\
 			    test_id, vt->wwid);				\
 }
 
@@ -551,8 +601,8 @@ static void test_vpd80_ ## size ## _ ## len ## _ ## wlen(void **state)  \
 		exp_len = wlen - 1;					\
 	n = create_vpd80(vt->vpdbuf, sizeof(vt->vpdbuf), input,		\
 			 size, len);					\
-	will_return(__wrap_ioctl, n);					\
-	will_return(__wrap_ioctl, vt->vpdbuf);				\
+	wrap_will_return(WRAP_IOCTL, n);				\
+	wrap_will_return(WRAP_IOCTL, vt->vpdbuf);			\
 	ret = get_vpd_sgio(10, 0x80, 0, vt->wwid, wlen);		\
 	assert_correct_wwid("test_vpd80_" #size "_" #len "_" #wlen,	\
 			    exp_len, ret, 0, 0, false,			\
@@ -621,6 +671,17 @@ make_test_vpd_eui(8, 17, 0);
 make_test_vpd_eui(8, 16, 0);
 make_test_vpd_eui(8, 10, 0);
 
+make_test_vpd_eui_badlen(8, 8, 17);
+/* Invalid entry, length overflow */
+make_test_vpd_eui_badlen(8, 12, -EOVERFLOW);
+make_test_vpd_eui_badlen(8, 9, -EOVERFLOW);
+/* invalid entry, no length overflow, but no full next entry */
+make_test_vpd_eui_badlen(8, 7, -EINVAL);
+make_test_vpd_eui_badlen(8, 5, -EINVAL);
+/* invalid entry, length of next one readable but too long */
+make_test_vpd_eui_badlen(8, 4, -EOVERFLOW);
+make_test_vpd_eui_badlen(8, 0, -EOVERFLOW);
+
 /* 96 bit, WWID size: 26 */
 make_test_vpd_eui(12, 32, 0);
 make_test_vpd_eui(12, 26, 0);
@@ -628,11 +689,37 @@ make_test_vpd_eui(12, 25, 0);
 make_test_vpd_eui(12, 20, 0);
 make_test_vpd_eui(12, 10, 0);
 
+make_test_vpd_eui_badlen(12, 12, 25);
+make_test_vpd_eui_badlen(12, 16, -EOVERFLOW);
+make_test_vpd_eui_badlen(12, 13, -EOVERFLOW);
+/* invalid entry, no length overflow, but no full next entry */
+make_test_vpd_eui_badlen(12, 11, -EINVAL);
+make_test_vpd_eui_badlen(12, 9, -EINVAL);
+/* non-fatal - valid 8-byte descriptor */
+make_test_vpd_eui_badlen(12, 8, 17);
+/* invalid entry, length of next one readable but too long */
+make_test_vpd_eui_badlen(12, 7, -EOVERFLOW);
+make_test_vpd_eui_badlen(12, 0, -EOVERFLOW);
+
 /* 128 bit, WWID size: 34 */
 make_test_vpd_eui(16, 40, 0);
 make_test_vpd_eui(16, 34, 0);
 make_test_vpd_eui(16, 33, 0);
 make_test_vpd_eui(16, 20, 0);
+
+make_test_vpd_eui_badlen(16, 16, 33);
+make_test_vpd_eui_badlen(16, 17, -EOVERFLOW);
+make_test_vpd_eui_badlen(16, 15, -EINVAL);
+make_test_vpd_eui_badlen(16, 13, -EINVAL);
+/* non-fatal - valid 12-byte descriptor */
+make_test_vpd_eui_badlen(16, 12, 25);
+/* invalid entry, length of next one readable but too long */
+make_test_vpd_eui_badlen(16, 11, -EOVERFLOW);
+/* non-fatal - valid 8-byte descriptor */
+make_test_vpd_eui_badlen(16, 8, 17);
+/* invalid entry, length of next one readable but too long */
+make_test_vpd_eui_badlen(16, 7, -EOVERFLOW);
+make_test_vpd_eui_badlen(16, 0, -EOVERFLOW);
 
 /* NAA IEEE registered extended (36), WWID size: 34 */
 make_test_vpd_naa(6, 40);
@@ -641,11 +728,32 @@ make_test_vpd_naa(6, 33);
 make_test_vpd_naa(6, 32);
 make_test_vpd_naa(6, 20);
 
+/* NAA IEEE registered extended with bad designator length */
+make_test_vpd_naa_badlen(6, 16, 33);
+/* offset overflow */
+make_test_vpd_naa_badlen(6, 17, -EOVERFLOW);
+/* invalid entry, no length overflow, but no full next entry */
+make_test_vpd_naa_badlen(6, 15, -EINVAL);
+/* invalid entry, length of next one readable but too long */
+make_test_vpd_naa_badlen(6, 8, -EOVERFLOW);
+make_test_vpd_naa_badlen(6, 0, -EOVERFLOW);
+
 /* NAA IEEE registered (35), WWID size: 18 */
 make_test_vpd_naa(5, 20);
 make_test_vpd_naa(5, 18);
 make_test_vpd_naa(5, 17);
 make_test_vpd_naa(5, 16);
+
+/* NAA IEEE registered with bad designator length */
+make_test_vpd_naa_badlen(5, 8, 17);
+/* offset overflow */
+make_test_vpd_naa_badlen(5, 16, -EOVERFLOW);
+make_test_vpd_naa_badlen(5, 9, -EOVERFLOW);
+/* invalid entry, no length overflow, but no full next entry */
+make_test_vpd_naa_badlen(5, 7, -EINVAL);
+/* invalid entry, length of next one readable but too long */
+make_test_vpd_naa_badlen(5, 4, -EOVERFLOW);
+make_test_vpd_naa_badlen(5, 0, -EOVERFLOW);
 
 /* NAA local (33), WWID size: 18 */
 make_test_vpd_naa(3, 20);
@@ -741,24 +849,59 @@ static int test_vpd(void)
 		cmocka_unit_test(test_vpd_eui_8_17_0),
 		cmocka_unit_test(test_vpd_eui_8_16_0),
 		cmocka_unit_test(test_vpd_eui_8_10_0),
+		cmocka_unit_test(test_vpd_eui_badlen_8_8),
+		cmocka_unit_test(test_vpd_eui_badlen_8_12),
+		cmocka_unit_test(test_vpd_eui_badlen_8_9),
+		cmocka_unit_test(test_vpd_eui_badlen_8_7),
+		cmocka_unit_test(test_vpd_eui_badlen_8_5),
+		cmocka_unit_test(test_vpd_eui_badlen_8_4),
+		cmocka_unit_test(test_vpd_eui_badlen_8_0),
 		cmocka_unit_test(test_vpd_eui_12_32_0),
 		cmocka_unit_test(test_vpd_eui_12_26_0),
 		cmocka_unit_test(test_vpd_eui_12_25_0),
 		cmocka_unit_test(test_vpd_eui_12_20_0),
 		cmocka_unit_test(test_vpd_eui_12_10_0),
+		cmocka_unit_test(test_vpd_eui_badlen_12_12),
+		cmocka_unit_test(test_vpd_eui_badlen_12_16),
+		cmocka_unit_test(test_vpd_eui_badlen_12_13),
+		cmocka_unit_test(test_vpd_eui_badlen_12_11),
+		cmocka_unit_test(test_vpd_eui_badlen_12_9),
+		cmocka_unit_test(test_vpd_eui_badlen_12_8),
+		cmocka_unit_test(test_vpd_eui_badlen_12_7),
+		cmocka_unit_test(test_vpd_eui_badlen_12_0),
 		cmocka_unit_test(test_vpd_eui_16_40_0),
 		cmocka_unit_test(test_vpd_eui_16_34_0),
 		cmocka_unit_test(test_vpd_eui_16_33_0),
 		cmocka_unit_test(test_vpd_eui_16_20_0),
+		cmocka_unit_test(test_vpd_eui_badlen_16_16),
+		cmocka_unit_test(test_vpd_eui_badlen_16_17),
+		cmocka_unit_test(test_vpd_eui_badlen_16_15),
+		cmocka_unit_test(test_vpd_eui_badlen_16_13),
+		cmocka_unit_test(test_vpd_eui_badlen_16_12),
+		cmocka_unit_test(test_vpd_eui_badlen_16_11),
+		cmocka_unit_test(test_vpd_eui_badlen_16_8),
+		cmocka_unit_test(test_vpd_eui_badlen_16_7),
+		cmocka_unit_test(test_vpd_eui_badlen_16_0),
 		cmocka_unit_test(test_vpd_naa_6_40),
 		cmocka_unit_test(test_vpd_naa_6_34),
 		cmocka_unit_test(test_vpd_naa_6_33),
 		cmocka_unit_test(test_vpd_naa_6_32),
 		cmocka_unit_test(test_vpd_naa_6_20),
+		cmocka_unit_test(test_vpd_naa_6_badlen_16),
+		cmocka_unit_test(test_vpd_naa_6_badlen_15),
+		cmocka_unit_test(test_vpd_naa_6_badlen_8),
+		cmocka_unit_test(test_vpd_naa_6_badlen_17),
+		cmocka_unit_test(test_vpd_naa_6_badlen_0),
 		cmocka_unit_test(test_vpd_naa_5_20),
 		cmocka_unit_test(test_vpd_naa_5_18),
 		cmocka_unit_test(test_vpd_naa_5_17),
 		cmocka_unit_test(test_vpd_naa_5_16),
+		cmocka_unit_test(test_vpd_naa_5_badlen_8),
+		cmocka_unit_test(test_vpd_naa_5_badlen_7),
+		cmocka_unit_test(test_vpd_naa_5_badlen_4),
+		cmocka_unit_test(test_vpd_naa_5_badlen_16),
+		cmocka_unit_test(test_vpd_naa_5_badlen_9),
+		cmocka_unit_test(test_vpd_naa_5_badlen_0),
 		cmocka_unit_test(test_vpd_naa_3_20),
 		cmocka_unit_test(test_vpd_naa_3_18),
 		cmocka_unit_test(test_vpd_naa_3_17),
@@ -799,6 +942,7 @@ int main(void)
 {
 	int ret = 0;
 
+	init_test_verbosity(-1);
 	ret += test_vpd();
 	return ret;
 }

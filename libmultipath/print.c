@@ -8,8 +8,8 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
-#include <string.h>
 #include <errno.h>
+#include <assert.h>
 #include <libudev.h>
 
 #include "checkers.h"
@@ -31,59 +31,119 @@
 #include "discovery.h"
 #include "util.h"
 #include "foreign.h"
+#include "strbuf.h"
+#include "sysfs.h"
+
+#define PRINT_PATH_LONG      "%w %i %d %D %p %t %T %s %o"
+#define PRINT_PATH_INDENT    "%i %d %D %t %T %o"
+#define PRINT_MAP_PROPS      "size=%S features='%f' hwhandler='%h' wp=%r"
+#define PRINT_PG_INDENT      "policy='%s' prio=%p status=%t"
+
+#define PRINT_JSON_MULTIPLIER     5
+#define PRINT_JSON_MAJOR_VERSION  0
+#define PRINT_JSON_MINOR_VERSION  1
+#define PRINT_JSON_START_VERSION  "   \"major_version\": %d,\n" \
+				  "   \"minor_version\": %d,\n"
+#define PRINT_JSON_START_ELEM     "{\n"
+#define PRINT_JSON_START_MAP      "   \"map\":"
+#define PRINT_JSON_START_MAPS     "\"maps\": ["
+#define PRINT_JSON_START_PATHS    "\"paths\": ["
+#define PRINT_JSON_START_GROUPS   "\"path_groups\": ["
+#define PRINT_JSON_END_ELEM       "},"
+#define PRINT_JSON_END_LAST_ELEM  "}"
+#define PRINT_JSON_END_LAST       "}\n"
+#define PRINT_JSON_END_ARRAY      "]\n"
+#define PRINT_JSON_INDENT_N    3
+#define PRINT_JSON_MAP       "{\n" \
+			     "      \"name\" : \"%n\",\n" \
+			     "      \"uuid\" : \"%w\",\n" \
+			     "      \"sysfs\" : \"%d\",\n" \
+			     "      \"failback\" : \"%F\",\n" \
+			     "      \"queueing\" : \"%Q\",\n" \
+			     "      \"paths\" : %N,\n" \
+			     "      \"write_prot\" : \"%r\",\n" \
+			     "      \"dm_st\" : \"%t\",\n" \
+			     "      \"features\" : \"%f\",\n" \
+			     "      \"hwhandler\" : \"%h\",\n" \
+			     "      \"action\" : \"%A\",\n" \
+			     "      \"path_faults\" : %0,\n" \
+			     "      \"vend\" : \"%v\",\n" \
+			     "      \"prod\" : \"%p\",\n" \
+			     "      \"rev\" : \"%e\",\n" \
+			     "      \"switch_grp\" : %1,\n" \
+			     "      \"map_loads\" : %2,\n" \
+			     "      \"total_q_time\" : %3,\n" \
+			     "      \"q_timeouts\" : %4,"
+
+#define PRINT_JSON_GROUP     "{\n" \
+			     "         \"selector\" : \"%s\",\n" \
+			     "         \"pri\" : %p,\n" \
+			     "         \"dm_st\" : \"%t\",\n" \
+			     "         \"marginal_st\" : \"%M\","
+
+#define PRINT_JSON_GROUP_NUM "         \"group\" : %d,\n"
+
+#define PRINT_JSON_PATH      "{\n" \
+			     "            \"dev\" : \"%d\",\n"\
+			     "            \"dev_t\" : \"%D\",\n" \
+			     "            \"dm_st\" : \"%t\",\n" \
+			     "            \"dev_st\" : \"%o\",\n" \
+			     "            \"chk_st\" : \"%T\",\n" \
+			     "            \"checker\" : \"%c\",\n" \
+			     "            \"pri\" : %p,\n" \
+			     "            \"host_wwnn\" : \"%N\",\n" \
+			     "            \"target_wwnn\" : \"%n\",\n" \
+			     "            \"host_wwpn\" : \"%R\",\n" \
+			     "            \"target_wwpn\" : \"%r\",\n" \
+			     "            \"host_adapter\" : \"%a\",\n" \
+			     "            \"lun_hex\" : \"%L\",\n" \
+			     "            \"marginal_st\" : \"%M\""
+
+#define PROGRESS_LEN  10
+
+struct path_data {
+	char wildcard;
+	char * header;
+	int (*snprint)(struct strbuf *, const struct path * pp);
+};
+
+struct multipath_data {
+	char wildcard;
+	char * header;
+	int (*snprint)(struct strbuf *, const struct multipath * mpp);
+};
+
+struct pathgroup_data {
+	char wildcard;
+	char * header;
+	int (*snprint)(struct strbuf *, const struct pathgroup * pgp);
+};
 
 #define MAX(x,y) (((x) > (y)) ? (x) : (y))
 #define MIN(x,y) (((x) > (y)) ? (y) : (x))
-#define TAIL     (line + len - 1 - c)
-#define NOPAD    s = c
-#define PAD(x) \
-do { \
-	while (c < (s + x) && (c < (line + len - 1))) \
-		*c++ = ' '; \
-	s = c; \
-} while (0)
-
-static char *
-__endline(char *line, size_t len, char *c)
-{
-	if (c > line) {
-		if (c >= line + len)
-			c = line + len - 1;
-		*(c - 1) = '\n';
-		*c = '\0';
-	}
-	return c;
-}
-
-#define PRINT(var, size, format, args...) \
-do { \
-	fwd = snprintf(var, size, format, ##args); \
-	c += (fwd >= size) ? size : fwd; \
-} while (0)
-
 /*
  * information printing helpers
  */
 static int
-snprint_str (char * buff, size_t len, const char * str)
+snprint_str(struct strbuf *buff, const char *str)
 {
-	return snprintf(buff, len, "%s", str);
+	return append_strbuf_str(buff, str);
 }
 
 static int
-snprint_int (char * buff, size_t len, int val)
+snprint_int (struct strbuf *buff, int val)
 {
-	return snprintf(buff, len, "%i", val);
+	return print_strbuf(buff, "%i", val);
 }
 
 static int
-snprint_uint (char * buff, size_t len, unsigned int val)
+snprint_uint (struct strbuf *buff, unsigned int val)
 {
-	return snprintf(buff, len, "%u", val);
+	return print_strbuf(buff, "%u", val);
 }
 
 static int
-snprint_size (char * buff, size_t len, unsigned long long size)
+snprint_size (struct strbuf *buff, unsigned long long size)
 {
 	float s = (float)(size >> 1); /* start with KB */
 	char units[] = {'K','M','G','T','P'};
@@ -94,184 +154,183 @@ snprint_size (char * buff, size_t len, unsigned long long size)
 		u++;
 	}
 
-	return snprintf(buff, len, "%.*f%c", s < 10, s, *u);
+	return print_strbuf(buff, "%.*f%c", s < 10, s, *u);
 }
 
 /*
  * multipath info printing functions
  */
 static int
-snprint_name (char * buff, size_t len, const struct multipath * mpp)
+snprint_name (struct strbuf *buff, const struct multipath * mpp)
 {
 	if (mpp->alias)
-		return snprintf(buff, len, "%s", mpp->alias);
+		return append_strbuf_str(buff, mpp->alias);
 	else
-		return snprintf(buff, len, "%s", mpp->wwid);
+		return append_strbuf_str(buff, mpp->wwid);
 }
 
 static int
-snprint_sysfs (char * buff, size_t len, const struct multipath * mpp)
+snprint_sysfs (struct strbuf *buff, const struct multipath * mpp)
 {
-	if (mpp->dmi)
-		return snprintf(buff, len, "dm-%i", mpp->dmi->minor);
+	if (has_dm_info(mpp))
+		return print_strbuf(buff, "dm-%i", mpp->dmi.minor);
 	else
-		return snprintf(buff, len, "undef");
+		return append_strbuf_str(buff, "undef");
 }
 
 static int
-snprint_ro (char * buff, size_t len, const struct multipath * mpp)
+snprint_ro (struct strbuf *buff, const struct multipath * mpp)
 {
-	if (!mpp->dmi)
-		return snprintf(buff, len, "undef");
-	if (mpp->dmi->read_only)
-		return snprintf(buff, len, "ro");
+	if (!has_dm_info(mpp))
+		return append_strbuf_str(buff, "undef");
+	if (mpp->dmi.read_only)
+		return append_strbuf_str(buff, "ro");
 	else
-		return snprintf(buff, len, "rw");
+		return append_strbuf_str(buff, "rw");
 }
 
 static int
-snprint_progress (char * buff, size_t len, int cur, int total)
+snprint_progress (struct strbuf *buff, int cur, int total)
 {
-	char * c = buff;
-	char * end = buff + len;
+	size_t initial_len = get_strbuf_len(buff);
+	int rc;
 
 	if (total > 0) {
 		int i = PROGRESS_LEN * cur / total;
 		int j = PROGRESS_LEN - i;
 
-		while (i-- > 0) {
-			c += snprintf(c, len, "X");
-			if ((len = (end - c)) <= 1) goto out;
-		}
-
-		while (j-- > 0) {
-			c += snprintf(c, len,  ".");
-			if ((len = (end - c)) <= 1) goto out;
+		if ((rc = fill_strbuf(buff, 'X', i)) < 0 ||
+		    (rc = fill_strbuf(buff, '.', j) < 0)) {
+			truncate_strbuf(buff, initial_len);
+			return rc;
 		}
 	}
 
-	c += snprintf(c, len, " %i/%i", cur, total);
-
-out:
-	buff[c - buff + 1] = '\0';
-	return (c - buff + 1);
+	if ((rc = print_strbuf(buff, " %i/%i", cur, total)) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
 }
 
 static int
-snprint_failback (char * buff, size_t len, const struct multipath * mpp)
+snprint_failback (struct strbuf *buff, const struct multipath * mpp)
 {
 	if (mpp->pgfailback == -FAILBACK_IMMEDIATE)
-		return snprintf(buff, len, "immediate");
+		return append_strbuf_str(buff, "immediate");
 	if (mpp->pgfailback == -FAILBACK_FOLLOWOVER)
-		return snprintf(buff, len, "followover");
+		return append_strbuf_str(buff, "followover");
+	if (mpp->pgfailback == -FAILBACK_MANUAL)
+		return append_strbuf_str(buff, "manual");
+	if (mpp->pgfailback == FAILBACK_UNDEF)
+		return append_strbuf_str(buff, "undef");
 
 	if (!mpp->failback_tick)
-		return snprintf(buff, len, "-");
+		return print_strbuf(buff, "deferred:%i", mpp->pgfailback);
 	else
-		return snprint_progress(buff, len, mpp->failback_tick,
+		return snprint_progress(buff, mpp->failback_tick,
 					mpp->pgfailback);
 }
 
 static int
-snprint_queueing (char * buff, size_t len, const struct multipath * mpp)
+snprint_queueing (struct strbuf *buff, const struct multipath * mpp)
 {
 	if (mpp->no_path_retry == NO_PATH_RETRY_FAIL)
-		return snprintf(buff, len, "off");
+		return append_strbuf_str(buff, "off");
 	else if (mpp->no_path_retry == NO_PATH_RETRY_QUEUE)
-		return snprintf(buff, len, "on");
+		return append_strbuf_str(buff, "on");
 	else if (mpp->no_path_retry == NO_PATH_RETRY_UNDEF)
-		return snprintf(buff, len, "-");
+		return append_strbuf_str(buff, "-");
 	else if (mpp->no_path_retry > 0) {
 		if (mpp->retry_tick > 0)
 
-			return snprintf(buff, len, "%i sec",
-					mpp->retry_tick);
+			return print_strbuf(buff, "%i sec", mpp->retry_tick);
 		else if (mpp->retry_tick == 0 && count_active_paths(mpp) > 0)
-			return snprintf(buff, len, "%i chk",
-					mpp->no_path_retry);
+			return print_strbuf(buff, "%i chk",
+					    mpp->no_path_retry);
 		else
-			return snprintf(buff, len, "off");
+			return append_strbuf_str(buff, "off");
 	}
 	return 0;
 }
 
 static int
-snprint_nb_paths (char * buff, size_t len, const struct multipath * mpp)
+snprint_nb_paths (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_int(buff, len, count_active_paths(mpp));
+	return snprint_int(buff, count_active_paths(mpp));
 }
 
 static int
-snprint_dm_map_state (char * buff, size_t len, const struct multipath * mpp)
+snprint_dm_map_state (struct strbuf *buff, const struct multipath * mpp)
 {
-	if (mpp->dmi && mpp->dmi->suspended)
-		return snprintf(buff, len, "suspend");
+	if (!has_dm_info(mpp))
+		return append_strbuf_str(buff, "undef");
+	else if (mpp->dmi.suspended)
+		return append_strbuf_str(buff, "suspend");
 	else
-		return snprintf(buff, len, "active");
+		return append_strbuf_str(buff, "active");
 }
 
 static int
-snprint_multipath_size (char * buff, size_t len, const struct multipath * mpp)
+snprint_multipath_size (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_size(buff, len, mpp->size);
+	return snprint_size(buff, mpp->size);
 }
 
 static int
-snprint_features (char * buff, size_t len, const struct multipath * mpp)
+snprint_features (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_str(buff, len, mpp->features);
+	return snprint_str(buff, mpp->features);
 }
 
 static int
-snprint_hwhandler (char * buff, size_t len, const struct multipath * mpp)
+snprint_hwhandler (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_str(buff, len, mpp->hwhandler);
+	return snprint_str(buff, mpp->hwhandler);
 }
 
 static int
-snprint_path_faults (char * buff, size_t len, const struct multipath * mpp)
+snprint_path_faults (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_uint(buff, len, mpp->stat_path_failures);
+	return snprint_uint(buff, mpp->stat_path_failures);
 }
 
 static int
-snprint_switch_grp (char * buff, size_t len, const struct multipath * mpp)
+snprint_switch_grp (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_uint(buff, len, mpp->stat_switchgroup);
+	return snprint_uint(buff, mpp->stat_switchgroup);
 }
 
 static int
-snprint_map_loads (char * buff, size_t len, const struct multipath * mpp)
+snprint_map_loads (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_uint(buff, len, mpp->stat_map_loads);
+	return snprint_uint(buff, mpp->stat_map_loads);
 }
 
 static int
-snprint_total_q_time (char * buff, size_t len, const struct multipath * mpp)
+snprint_total_q_time (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_uint(buff, len, mpp->stat_total_queueing_time);
+	return snprint_uint(buff, mpp->stat_total_queueing_time);
 }
 
 static int
-snprint_q_timeouts (char * buff, size_t len, const struct multipath * mpp)
+snprint_q_timeouts (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_uint(buff, len, mpp->stat_queueing_timeouts);
+	return snprint_uint(buff, mpp->stat_queueing_timeouts);
 }
 
 static int
-snprint_map_failures (char * buff, size_t len, const struct multipath * mpp)
+snprint_map_failures (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_uint(buff, len, mpp->stat_map_failures);
+	return snprint_uint(buff, mpp->stat_map_failures);
 }
 
 static int
-snprint_multipath_uuid (char * buff, size_t len, const struct multipath * mpp)
+snprint_multipath_uuid (struct strbuf *buff, const struct multipath * mpp)
 {
-	return snprint_str(buff, len, mpp->wwid);
+	return snprint_str(buff, mpp->wwid);
 }
 
 static int
-snprint_multipath_vpr (char * buff, size_t len, const struct multipath * mpp)
+snprint_multipath_vp (struct strbuf *buff, const struct multipath * mpp)
 {
 	struct pathgroup * pgp;
 	struct path * pp;
@@ -280,16 +339,16 @@ snprint_multipath_vpr (char * buff, size_t len, const struct multipath * mpp)
 	vector_foreach_slot(mpp->pg, pgp, i) {
 		vector_foreach_slot(pgp->paths, pp, j) {
 			if (strlen(pp->vendor_id) && strlen(pp->product_id))
-				return snprintf(buff, len, "%s,%s",
-						pp->vendor_id, pp->product_id);
+				return print_strbuf(buff, "%s,%s",
+						    pp->vendor_id, pp->product_id);
 		}
 	}
-	return snprintf(buff, len, "##,##");
+	return append_strbuf_str(buff, "##,##");
 }
 
 
 static int
-snprint_multipath_vend (char * buff, size_t len, const struct multipath * mpp)
+snprint_multipath_vend (struct strbuf *buff, const struct multipath * mpp)
 {
 	struct pathgroup * pgp;
 	struct path * pp;
@@ -298,14 +357,14 @@ snprint_multipath_vend (char * buff, size_t len, const struct multipath * mpp)
 	vector_foreach_slot(mpp->pg, pgp, i) {
 		vector_foreach_slot(pgp->paths, pp, j) {
 			if (strlen(pp->vendor_id))
-				return snprintf(buff, len, "%s", pp->vendor_id);
+				return append_strbuf_str(buff, pp->vendor_id);
 		}
 	}
-	return snprintf(buff, len, "##");
+	return append_strbuf_str(buff, "##");
 }
 
 static int
-snprint_multipath_prod (char * buff, size_t len, const struct multipath * mpp)
+snprint_multipath_prod (struct strbuf *buff, const struct multipath * mpp)
 {
 	struct pathgroup * pgp;
 	struct path * pp;
@@ -314,14 +373,14 @@ snprint_multipath_prod (char * buff, size_t len, const struct multipath * mpp)
 	vector_foreach_slot(mpp->pg, pgp, i) {
 		vector_foreach_slot(pgp->paths, pp, j) {
 			if (strlen(pp->product_id))
-				return snprintf(buff, len, "%s", pp->product_id);
+				return append_strbuf_str(buff, pp->product_id);
 		}
 	}
-	return snprintf(buff, len, "##");
+	return append_strbuf_str(buff, "##");
 }
 
 static int
-snprint_multipath_rev (char * buff, size_t len, const struct multipath * mpp)
+snprint_multipath_rev (struct strbuf *buff, const struct multipath * mpp)
 {
 	struct pathgroup * pgp;
 	struct path * pp;
@@ -330,40 +389,40 @@ snprint_multipath_rev (char * buff, size_t len, const struct multipath * mpp)
 	vector_foreach_slot(mpp->pg, pgp, i) {
 		vector_foreach_slot(pgp->paths, pp, j) {
 			if (strlen(pp->rev))
-				return snprintf(buff, len, "%s", pp->rev);
+				return append_strbuf_str(buff, pp->rev);
 		}
 	}
-	return snprintf(buff, len, "##");
+	return append_strbuf_str(buff, "##");
 }
 
 static int
-snprint_multipath_foreign (char * buff, size_t len,
+snprint_multipath_foreign (struct strbuf *buff,
 			   __attribute__((unused)) const struct multipath * pp)
 {
-	return snprintf(buff, len, "%s", "--");
+	return append_strbuf_str(buff, "--");
 }
 
 static int
-snprint_action (char * buff, size_t len, const struct multipath * mpp)
+snprint_action (struct strbuf *buff, const struct multipath * mpp)
 {
 	switch (mpp->action) {
 	case ACT_REJECT:
-		return snprint_str(buff, len, ACT_REJECT_STR);
+		return snprint_str(buff, ACT_REJECT_STR);
 	case ACT_RENAME:
-		return snprint_str(buff, len, ACT_RENAME_STR);
+		return snprint_str(buff, ACT_RENAME_STR);
 	case ACT_RELOAD:
-		return snprint_str(buff, len, ACT_RELOAD_STR);
+		return snprint_str(buff, ACT_RELOAD_STR);
 	case ACT_CREATE:
-		return snprint_str(buff, len, ACT_CREATE_STR);
+		return snprint_str(buff, ACT_CREATE_STR);
 	case ACT_SWITCHPG:
-		return snprint_str(buff, len, ACT_SWITCHPG_STR);
+		return snprint_str(buff, ACT_SWITCHPG_STR);
 	default:
 		return 0;
 	}
 }
 
 static int
-snprint_multipath_vpd_data(char * buff, size_t len,
+snprint_multipath_vpd_data(struct strbuf *buff,
 			   const struct multipath * mpp)
 {
 	struct pathgroup * pgp;
@@ -373,194 +432,256 @@ snprint_multipath_vpd_data(char * buff, size_t len,
 	vector_foreach_slot(mpp->pg, pgp, i)
 		vector_foreach_slot(pgp->paths, pp, j)
 			if (pp->vpd_data)
-				return snprintf(buff, len, "%s", pp->vpd_data);
-	return snprintf(buff, len, "[undef]");
+				return append_strbuf_str(buff, pp->vpd_data);
+	return append_strbuf_str(buff, "[undef]");
+}
+
+static void cleanup_udev_device(struct udev_device **udd)
+{
+	if (*udd)
+		udev_device_unref(*udd);
+}
+
+static int
+snprint_multipath_max_sectors_kb(struct strbuf *buff, const struct multipath *mpp)
+{
+	char buf[11];
+	int max_sectors_kb;
+	struct udev_device *udd __attribute__((cleanup(cleanup_udev_device)))
+		= get_udev_for_mpp(mpp);
+
+	if (!udd ||
+	    sysfs_attr_get_value(udd, "queue/max_sectors_kb", buf, sizeof(buf)) <= 0 ||
+	    sscanf(buf, "%d\n", &max_sectors_kb) != 1)
+		return print_strbuf(buff, "n/a");
+	return print_strbuf(buff, "%d", max_sectors_kb);
 }
 
 /*
  * path info printing functions
  */
 static int
-snprint_path_uuid (char * buff, size_t len, const struct path * pp)
+snprint_path_uuid (struct strbuf *buff, const struct path * pp)
 {
-	return snprint_str(buff, len, pp->wwid);
+	return snprint_str(buff, pp->wwid);
 }
 
 static int
-snprint_hcil (char * buff, size_t len, const struct path * pp)
+snprint_hcil (struct strbuf *buff, const struct path * pp)
 {
 	if (!pp || pp->sg_id.host_no < 0)
-		return snprintf(buff, len, "#:#:#:#");
+		return append_strbuf_str(buff, "#:#:#:#");
 
-	return snprintf(buff, len, "%i:%i:%i:%i",
+	return print_strbuf(buff, "%i:%i:%i:%" PRIu64,
 			pp->sg_id.host_no,
 			pp->sg_id.channel,
 			pp->sg_id.scsi_id,
 			pp->sg_id.lun);
 }
 
+
 static int
-snprint_dev (char * buff, size_t len, const struct path * pp)
+snprint_path_lunhex (struct strbuf *buff, const struct path * pp)
 {
-	if (!pp || !strlen(pp->dev))
-		return snprintf(buff, len, "-");
-	else
-		return snprint_str(buff, len, pp->dev);
+	uint64_t lunhex = SCSI_INVALID_LUN, scsilun;
+
+	if (!pp || pp->sg_id.host_no < 0)
+		return print_strbuf(buff, "0x%016" PRIx64, lunhex);
+
+	scsilun = pp->sg_id.lun;
+	/* cf. Linux kernel function int_to_scsilun() */
+	lunhex = ((scsilun & 0x000000000000ffffULL) << 48) |
+		((scsilun & 0x00000000ffff0000ULL) << 16) |
+		((scsilun & 0x0000ffff00000000ULL) >> 16) |
+		((scsilun & 0xffff000000000000ULL) >> 48);
+	return print_strbuf(buff, "0x%016" PRIx64, lunhex);
 }
 
 static int
-snprint_dev_t (char * buff, size_t len, const struct path * pp)
+snprint_dev (struct strbuf *buff, const struct path * pp)
 {
 	if (!pp || !strlen(pp->dev))
-		return snprintf(buff, len, "#:#");
+		return append_strbuf_str(buff, "-");
 	else
-		return snprint_str(buff, len, pp->dev_t);
+		return snprint_str(buff, pp->dev);
 }
 
 static int
-snprint_offline (char * buff, size_t len, const struct path * pp)
+snprint_dev_t (struct strbuf *buff, const struct path * pp)
+{
+	if (!pp || !strlen(pp->dev))
+		return append_strbuf_str(buff, "#:#");
+	else
+		return snprint_str(buff, pp->dev_t);
+}
+
+static int
+snprint_offline (struct strbuf *buff, const struct path * pp)
 {
 	if (!pp || !pp->mpp)
-		return snprintf(buff, len, "unknown");
+		return append_strbuf_str(buff, "unknown");
 	else if (pp->offline)
-		return snprintf(buff, len, "offline");
+		return append_strbuf_str(buff, "offline");
 	else
-		return snprintf(buff, len, "running");
+		return append_strbuf_str(buff, "running");
 }
 
 static int
-snprint_chk_state (char * buff, size_t len, const struct path * pp)
+snprint_chk_state (struct strbuf *buff, const struct path * pp)
 {
 	if (!pp || !pp->mpp)
-		return snprintf(buff, len, "undef");
+		return append_strbuf_str(buff, "undef");
 
 	switch (pp->state) {
 	case PATH_UP:
-		return snprintf(buff, len, "ready");
+		return append_strbuf_str(buff, "ready");
 	case PATH_DOWN:
-		return snprintf(buff, len, "faulty");
+		return append_strbuf_str(buff, "faulty");
 	case PATH_SHAKY:
-		return snprintf(buff, len, "shaky");
+		return append_strbuf_str(buff, "shaky");
 	case PATH_GHOST:
-		return snprintf(buff, len, "ghost");
+		return append_strbuf_str(buff, "ghost");
 	case PATH_PENDING:
-		return snprintf(buff, len, "i/o pending");
+		return append_strbuf_str(buff, "i/o pending");
 	case PATH_TIMEOUT:
-		return snprintf(buff, len, "i/o timeout");
+		return append_strbuf_str(buff, "i/o timeout");
 	case PATH_DELAYED:
-		return snprintf(buff, len, "delayed");
+		return append_strbuf_str(buff, "delayed");
 	default:
-		return snprintf(buff, len, "undef");
+		return append_strbuf_str(buff, "undef");
 	}
 }
 
 static int
-snprint_dm_path_state (char * buff, size_t len, const struct path * pp)
+snprint_dm_path_state (struct strbuf *buff, const struct path * pp)
 {
 	if (!pp)
-		return snprintf(buff, len, "undef");
+		return append_strbuf_str(buff, "undef");
 
 	switch (pp->dmstate) {
 	case PSTATE_ACTIVE:
-		return snprintf(buff, len, "active");
+		return append_strbuf_str(buff, "active");
 	case PSTATE_FAILED:
-		return snprintf(buff, len, "failed");
+		return append_strbuf_str(buff, "failed");
 	default:
-		return snprintf(buff, len, "undef");
+		return append_strbuf_str(buff, "undef");
 	}
 }
 
-static int
-snprint_vpr (char * buff, size_t len, const struct path * pp)
+static int snprint_initialized(struct strbuf *buff, const struct path * pp)
 {
-	return snprintf(buff, len, "%s,%s",
-			pp->vendor_id, pp->product_id);
+	static const char *init_state_name[] = {
+		[INIT_NEW] = "new",
+		[INIT_FAILED] = "failed",
+		[INIT_MISSING_UDEV] = "udev-missing",
+		[INIT_REQUESTED_UDEV] = "udev-requested",
+		[INIT_OK] = "ok",
+		[INIT_REMOVED] = "removed",
+		[INIT_PARTIAL] = "partial",
+	};
+	const char *str;
+
+	if (pp->initialized < INIT_NEW || pp->initialized >= __INIT_LAST)
+		str = "undef";
+	else
+		str = init_state_name[pp->initialized];
+	return append_strbuf_str(buff, str);
 }
 
 static int
-snprint_next_check (char * buff, size_t len, const struct path * pp)
+snprint_vpr (struct strbuf *buff, const struct path * pp)
+{
+	return print_strbuf(buff, "%s,%s,%s",
+			    strlen(pp->vendor_id) ? pp->vendor_id : "##",
+			    strlen(pp->product_id) ? pp->product_id : "##",
+			    strlen(pp->rev) ? pp->rev : "##");
+}
+
+static int
+snprint_next_check (struct strbuf *buff, const struct path * pp)
 {
 	if (!pp || !pp->mpp)
-		return snprintf(buff, len, "orphan");
+		return append_strbuf_str(buff, "orphan");
 
-	return snprint_progress(buff, len, pp->tick, pp->checkint);
+	return snprint_progress(buff, pp->tick, pp->checkint);
 }
 
 static int
-snprint_pri (char * buff, size_t len, const struct path * pp)
+snprint_pri (struct strbuf *buff, const struct path * pp)
 {
-	return snprint_int(buff, len, pp ? pp->priority : -1);
+	return snprint_int(buff, pp ? pp->priority : -1);
 }
 
 static int
-snprint_pg_selector (char * buff, size_t len, const struct pathgroup * pgp)
+snprint_pg_selector (struct strbuf *buff, const struct pathgroup * pgp)
 {
 	const char *s = pgp->mpp->selector;
 
-	return snprint_str(buff, len, s ? s : "");
+	return snprint_str(buff, s ? s : "");
 }
 
 static int
-snprint_pg_pri (char * buff, size_t len, const struct pathgroup * pgp)
+snprint_pg_pri (struct strbuf *buff, const struct pathgroup * pgp)
 {
-	return snprint_int(buff, len, pgp->priority);
+	return snprint_int(buff, pgp->priority);
 }
 
 static int
-snprint_pg_state (char * buff, size_t len, const struct pathgroup * pgp)
+snprint_pg_state (struct strbuf *buff, const struct pathgroup * pgp)
 {
 	switch (pgp->status) {
 	case PGSTATE_ENABLED:
-		return snprintf(buff, len, "enabled");
+		return append_strbuf_str(buff, "enabled");
 	case PGSTATE_DISABLED:
-		return snprintf(buff, len, "disabled");
+		return append_strbuf_str(buff, "disabled");
 	case PGSTATE_ACTIVE:
-		return snprintf(buff, len, "active");
+		return append_strbuf_str(buff, "active");
 	default:
-		return snprintf(buff, len, "undef");
+		return append_strbuf_str(buff, "undef");
 	}
 }
 
 static int
-snprint_pg_marginal (char * buff, size_t len, const struct pathgroup * pgp)
+snprint_pg_marginal (struct strbuf *buff, const struct pathgroup * pgp)
 {
 	if (pgp->marginal)
-		return snprintf(buff, len, "marginal");
-	return snprintf(buff, len, "normal");
+		return append_strbuf_str(buff, "marginal");
+	return append_strbuf_str(buff, "normal");
 }
 
 static int
-snprint_path_size (char * buff, size_t len, const struct path * pp)
+snprint_path_size (struct strbuf *buff, const struct path * pp)
 {
-	return snprint_size(buff, len, pp->size);
+	return snprint_size(buff, pp->size);
 }
 
 int
-snprint_path_serial (char * buff, size_t len, const struct path * pp)
+snprint_path_serial (struct strbuf *buff, const struct path * pp)
 {
-	return snprint_str(buff, len, pp->serial);
+	return snprint_str(buff, pp->serial);
 }
 
 static int
-snprint_path_mpp (char * buff, size_t len, const struct path * pp)
+snprint_path_mpp (struct strbuf *buff, const struct path * pp)
 {
 	if (!pp->mpp)
-		return snprintf(buff, len, "[orphan]");
+		return append_strbuf_str(buff, "[orphan]");
 	if (!pp->mpp->alias)
-		return snprintf(buff, len, "[unknown]");
-	return snprint_str(buff, len, pp->mpp->alias);
+		return append_strbuf_str(buff, "[unknown]");
+	return snprint_str(buff, pp->mpp->alias);
 }
 
 static int
-snprint_host_attr (char * buff, size_t len, const struct path * pp, char *attr)
+snprint_host_attr (struct strbuf *buff, const struct path * pp, char *attr)
 {
 	struct udev_device *host_dev = NULL;
 	char host_id[32];
 	const char *value = NULL;
 	int ret;
 
-	if (pp->sg_id.proto_id != SCSI_PROTOCOL_FCP)
-		return snprintf(buff, len, "[undef]");
+	if (pp->bus != SYSFS_BUS_SCSI ||
+	    pp->sg_id.proto_id != SCSI_PROTOCOL_FCP)
+		return append_strbuf_str(buff, "[undef]");
 	sprintf(host_id, "host%d", pp->sg_id.host_no);
 	host_dev = udev_device_new_from_subsystem_sysname(udev, "fc_host",
 							  host_id);
@@ -570,36 +691,37 @@ snprint_host_attr (char * buff, size_t len, const struct path * pp, char *attr)
 	}
 	value = udev_device_get_sysattr_value(host_dev, attr);
 	if (value)
-		ret = snprint_str(buff, len, value);
+		ret = snprint_str(buff, value);
 	udev_device_unref(host_dev);
 out:
 	if (!value)
-		ret = snprintf(buff, len, "[unknown]");
+		ret = append_strbuf_str(buff, "[unknown]");
 	return ret;
 }
 
 int
-snprint_host_wwnn (char * buff, size_t len, const struct path * pp)
+snprint_host_wwnn (struct strbuf *buff, const struct path * pp)
 {
-	return snprint_host_attr(buff, len, pp, "node_name");
+	return snprint_host_attr(buff, pp, "node_name");
 }
 
 int
-snprint_host_wwpn (char * buff, size_t len, const struct path * pp)
+snprint_host_wwpn (struct strbuf *buff, const struct path * pp)
 {
-	return snprint_host_attr(buff, len, pp, "port_name");
+	return snprint_host_attr(buff, pp, "port_name");
 }
 
 int
-snprint_tgt_wwpn (char * buff, size_t len, const struct path * pp)
+snprint_tgt_wwpn (struct strbuf *buff, const struct path * pp)
 {
 	struct udev_device *rport_dev = NULL;
-	char rport_id[32];
+	char rport_id[42];
 	const char *value = NULL;
 	int ret;
 
-	if (pp->sg_id.proto_id != SCSI_PROTOCOL_FCP)
-		return snprintf(buff, len, "[undef]");
+	if (pp->bus != SYSFS_BUS_SCSI ||
+	    pp->sg_id.proto_id != SCSI_PROTOCOL_FCP)
+		return append_strbuf_str(buff, "[undef]");
 	sprintf(rport_id, "rport-%d:%d-%d",
 		pp->sg_id.host_no, pp->sg_id.channel, pp->sg_id.transport_id);
 	rport_dev = udev_device_new_from_subsystem_sysname(udev,
@@ -611,209 +733,211 @@ snprint_tgt_wwpn (char * buff, size_t len, const struct path * pp)
 	}
 	value = udev_device_get_sysattr_value(rport_dev, "port_name");
 	if (value)
-		ret = snprint_str(buff, len, value);
+		ret = snprint_str(buff, value);
 	udev_device_unref(rport_dev);
 out:
 	if (!value)
-		ret = snprintf(buff, len, "[unknown]");
+		ret = append_strbuf_str(buff, "[unknown]");
 	return ret;
 }
 
 
 int
-snprint_tgt_wwnn (char * buff, size_t len, const struct path * pp)
+snprint_tgt_wwnn (struct strbuf *buff, const struct path * pp)
 {
 	if (pp->tgt_node_name[0] == '\0')
-		return snprintf(buff, len, "[undef]");
-	return snprint_str(buff, len, pp->tgt_node_name);
+		return append_strbuf_str(buff, "[undef]");
+	return snprint_str(buff, pp->tgt_node_name);
 }
 
 static int
-snprint_host_adapter (char * buff, size_t len, const struct path * pp)
+snprint_host_adapter (struct strbuf *buff, const struct path * pp)
 {
 	char adapter[SLOT_NAME_SIZE];
 
 	if (sysfs_get_host_adapter_name(pp, adapter))
-		return snprintf(buff, len, "[undef]");
-	return snprint_str(buff, len, adapter);
+		return append_strbuf_str(buff, "[undef]");
+	return snprint_str(buff, adapter);
 }
 
 static int
-snprint_path_checker (char * buff, size_t len, const struct path * pp)
+snprint_path_checker (struct strbuf *buff, const struct path * pp)
 {
-	const struct checker * c = &pp->checker;
-	return snprint_str(buff, len, checker_name(c));
+	const char * n = checker_name(&pp->checker);
+
+	if (n)
+		return snprint_str(buff, n);
+	else
+		return snprint_str(buff, "(null)");
 }
 
 static int
-snprint_path_foreign (char * buff, size_t len,
+snprint_path_foreign (struct strbuf *buff,
 		      __attribute__((unused)) const struct path * pp)
 {
-	return snprintf(buff, len, "%s", "--");
+	return append_strbuf_str(buff, "--");
 }
 
 static int
-snprint_path_failures(char * buff, size_t len, const struct path * pp)
+snprint_path_failures(struct strbuf *buff, const struct path * pp)
 {
-	return snprint_int(buff, len, pp->failcount);
+	return snprint_int(buff, pp->failcount);
 }
 
 /* if you add a protocol string bigger than "scsi:unspec" you must
  * also change PROTOCOL_BUF_SIZE */
 int
-snprint_path_protocol(char * buff, size_t len, const struct path * pp)
+snprint_path_protocol(struct strbuf *buff, const struct path * pp)
 {
-	switch (pp->bus) {
-	case SYSFS_BUS_SCSI:
-		switch (pp->sg_id.proto_id) {
-		case SCSI_PROTOCOL_FCP:
-			return snprintf(buff, len, "scsi:fcp");
-		case SCSI_PROTOCOL_SPI:
-			return snprintf(buff, len, "scsi:spi");
-		case SCSI_PROTOCOL_SSA:
-			return snprintf(buff, len, "scsi:ssa");
-		case SCSI_PROTOCOL_SBP:
-			return snprintf(buff, len, "scsi:sbp");
-		case SCSI_PROTOCOL_SRP:
-			return snprintf(buff, len, "scsi:srp");
-		case SCSI_PROTOCOL_ISCSI:
-			return snprintf(buff, len, "scsi:iscsi");
-		case SCSI_PROTOCOL_SAS:
-			return snprintf(buff, len, "scsi:sas");
-		case SCSI_PROTOCOL_ADT:
-			return snprintf(buff, len, "scsi:adt");
-		case SCSI_PROTOCOL_ATA:
-			return snprintf(buff, len, "scsi:ata");
-		case SCSI_PROTOCOL_USB:
-			return snprintf(buff, len, "scsi:usb");
-		case SCSI_PROTOCOL_UNSPEC:
-		default:
-			return snprintf(buff, len, "scsi:unspec");
-		}
-	case SYSFS_BUS_CCW:
-		return snprintf(buff, len, "ccw");
-	case SYSFS_BUS_CCISS:
-		return snprintf(buff, len, "cciss");
-	case SYSFS_BUS_NVME:
-		return snprintf(buff, len, "nvme");
-	case SYSFS_BUS_UNDEF:
-	default:
-		return snprintf(buff, len, "undef");
-	}
-}
+	const char *pn = protocol_name[bus_protocol_id(pp)];
 
-int
-snprint_path_marginal(char * buff, size_t len, const struct path * pp)
-{
-	if (pp->marginal)
-		return snprintf(buff, len, "marginal");
-	return snprintf(buff, len, "normal");
+	assert(pn != NULL);
+	return append_strbuf_str(buff, pn);
 }
 
 static int
-snprint_path_vpd_data(char * buff, size_t len, const struct path * pp)
+snprint_path_marginal(struct strbuf *buff, const struct path * pp)
+{
+	if (pp->marginal)
+		return append_strbuf_str(buff, "marginal");
+	return append_strbuf_str(buff, "normal");
+}
+
+static int
+snprint_path_vpd_data(struct strbuf *buff, const struct path * pp)
 {
 	if (pp->vpd_data)
-		return snprintf(buff, len, "%s", pp->vpd_data);
-	return snprintf(buff, len, "[undef]");
+		return append_strbuf_str(buff, pp->vpd_data);
+	return append_strbuf_str(buff, "[undef]");
 }
 
-struct multipath_data mpd[] = {
-	{'n', "name",          0, snprint_name},
-	{'w', "uuid",          0, snprint_multipath_uuid},
-	{'d', "sysfs",         0, snprint_sysfs},
-	{'F', "failback",      0, snprint_failback},
-	{'Q', "queueing",      0, snprint_queueing},
-	{'N', "paths",         0, snprint_nb_paths},
-	{'r', "write_prot",    0, snprint_ro},
-	{'t', "dm-st",         0, snprint_dm_map_state},
-	{'S', "size",          0, snprint_multipath_size},
-	{'f', "features",      0, snprint_features},
-	{'x', "failures",      0, snprint_map_failures},
-	{'h', "hwhandler",     0, snprint_hwhandler},
-	{'A', "action",        0, snprint_action},
-	{'0', "path_faults",   0, snprint_path_faults},
-	{'1', "switch_grp",    0, snprint_switch_grp},
-	{'2', "map_loads",     0, snprint_map_loads},
-	{'3', "total_q_time",  0, snprint_total_q_time},
-	{'4', "q_timeouts",    0, snprint_q_timeouts},
-	{'s', "vend/prod/rev", 0, snprint_multipath_vpr},
-	{'v', "vend",          0, snprint_multipath_vend},
-	{'p', "prod",          0, snprint_multipath_prod},
-	{'e', "rev",           0, snprint_multipath_rev},
-	{'G', "foreign",       0, snprint_multipath_foreign},
-	{'g', "vpd page data", 0, snprint_multipath_vpd_data},
-	{0, NULL, 0 , NULL}
-};
-
-struct path_data pd[] = {
-	{'w', "uuid",          0, snprint_path_uuid},
-	{'i', "hcil",          0, snprint_hcil},
-	{'d', "dev",           0, snprint_dev},
-	{'D', "dev_t",         0, snprint_dev_t},
-	{'t', "dm_st",         0, snprint_dm_path_state},
-	{'o', "dev_st",        0, snprint_offline},
-	{'T', "chk_st",        0, snprint_chk_state},
-	{'s', "vend/prod/rev", 0, snprint_vpr},
-	{'c', "checker",       0, snprint_path_checker},
-	{'C', "next_check",    0, snprint_next_check},
-	{'p', "pri",           0, snprint_pri},
-	{'S', "size",          0, snprint_path_size},
-	{'z', "serial",        0, snprint_path_serial},
-	{'M', "marginal_st",   0, snprint_path_marginal},
-	{'m', "multipath",     0, snprint_path_mpp},
-	{'N', "host WWNN",     0, snprint_host_wwnn},
-	{'n', "target WWNN",   0, snprint_tgt_wwnn},
-	{'R', "host WWPN",     0, snprint_host_wwpn},
-	{'r', "target WWPN",   0, snprint_tgt_wwpn},
-	{'a', "host adapter",  0, snprint_host_adapter},
-	{'G', "foreign",       0, snprint_path_foreign},
-	{'g', "vpd page data", 0, snprint_path_vpd_data},
-	{'0', "failures",      0, snprint_path_failures},
-	{'P', "protocol",      0, snprint_path_protocol},
-	{0, NULL, 0 , NULL}
-};
-
-struct pathgroup_data pgd[] = {
-	{'s', "selector",      0, snprint_pg_selector},
-	{'p', "pri",           0, snprint_pg_pri},
-	{'t', "dm_st",         0, snprint_pg_state},
-	{'M', "marginal_st",   0, snprint_pg_marginal},
-	{0, NULL, 0 , NULL}
-};
-
-int
-snprint_wildcards (char * buff, int len)
+static int
+snprint_alua_tpg(struct strbuf *buff, const struct path * pp)
 {
-	int i, fwd = 0;
-
-	fwd += snprintf(buff + fwd, len - fwd, "multipath format wildcards:\n");
-	for (i = 0; mpd[i].header; i++)
-		fwd += snprintf(buff + fwd, len - fwd, "%%%c  %s\n",
-				mpd[i].wildcard, mpd[i].header);
-	fwd += snprintf(buff + fwd, len - fwd, "\npath format wildcards:\n");
-	for (i = 0; pd[i].header; i++)
-		fwd += snprintf(buff + fwd, len - fwd, "%%%c  %s\n",
-				pd[i].wildcard, pd[i].header);
-	fwd += snprintf(buff + fwd, len - fwd, "\npathgroup format wildcards:\n");
-	for (i = 0; pgd[i].header; i++)
-		fwd += snprintf(buff + fwd, len - fwd, "%%%c  %s\n",
-				pgd[i].wildcard, pgd[i].header);
-	return fwd;
+	if (pp->tpg_id < 0)
+		return append_strbuf_str(buff, "[undef]");
+	return print_strbuf(buff, "0x%04x", pp->tpg_id);
 }
 
-void
-get_path_layout(vector pathvec, int header)
+static int
+snprint_path_max_sectors_kb(struct strbuf *buff, const struct path *pp)
+{
+	char buf[11];
+	int max_sectors_kb;
+
+	if (!pp->udev ||
+	    sysfs_attr_get_value(pp->udev, "queue/max_sectors_kb", 
+				 buf, sizeof(buf)) <= 0 ||
+	    sscanf(buf, "%d\n", &max_sectors_kb) != 1)
+		return print_strbuf(buff, "n/a");
+	return print_strbuf(buff, "%d", max_sectors_kb);
+}
+
+static const struct multipath_data mpd[] = {
+	{'n', "name",          snprint_name},
+	{'w', "uuid",          snprint_multipath_uuid},
+	{'d', "sysfs",         snprint_sysfs},
+	{'F', "failback",      snprint_failback},
+	{'Q', "queueing",      snprint_queueing},
+	{'N', "paths",         snprint_nb_paths},
+	{'r', "write_prot",    snprint_ro},
+	{'t', "dm-st",         snprint_dm_map_state},
+	{'S', "size",          snprint_multipath_size},
+	{'f', "features",      snprint_features},
+	{'x', "failures",      snprint_map_failures},
+	{'h', "hwhandler",     snprint_hwhandler},
+	{'A', "action",        snprint_action},
+	{'0', "path_faults",   snprint_path_faults},
+	{'1', "switch_grp",    snprint_switch_grp},
+	{'2', "map_loads",     snprint_map_loads},
+	{'3', "total_q_time",  snprint_total_q_time},
+	{'4', "q_timeouts",    snprint_q_timeouts},
+	{'s', "vend/prod",     snprint_multipath_vp},
+	{'v', "vend",          snprint_multipath_vend},
+	{'p', "prod",          snprint_multipath_prod},
+	{'e', "rev",           snprint_multipath_rev},
+	{'G', "foreign",       snprint_multipath_foreign},
+	{'g', "vpd page data", snprint_multipath_vpd_data},
+	{'k', "max_sectors_kb",snprint_multipath_max_sectors_kb},
+};
+
+static const struct path_data pd[] = {
+	{'w', "uuid",          snprint_path_uuid},
+	{'i', "hcil",          snprint_hcil},
+	{'d', "dev",           snprint_dev},
+	{'D', "dev_t",         snprint_dev_t},
+	{'t', "dm_st",         snprint_dm_path_state},
+	{'o', "dev_st",        snprint_offline},
+	{'T', "chk_st",        snprint_chk_state},
+	{'s', "vend/prod/rev", snprint_vpr},
+	{'c', "checker",       snprint_path_checker},
+	{'C', "next_check",    snprint_next_check},
+	{'p', "pri",           snprint_pri},
+	{'S', "size",          snprint_path_size},
+	{'z', "serial",        snprint_path_serial},
+	{'M', "marginal_st",   snprint_path_marginal},
+	{'m', "multipath",     snprint_path_mpp},
+	{'N', "host WWNN",     snprint_host_wwnn},
+	{'n', "target WWNN",   snprint_tgt_wwnn},
+	{'R', "host WWPN",     snprint_host_wwpn},
+	{'r', "target WWPN",   snprint_tgt_wwpn},
+	{'a', "host adapter",  snprint_host_adapter},
+	{'G', "foreign",       snprint_path_foreign},
+	{'g', "vpd page data", snprint_path_vpd_data},
+	{'0', "failures",      snprint_path_failures},
+	{'P', "protocol",      snprint_path_protocol},
+	{'I', "init_st",       snprint_initialized},
+	{'L', "LUN hex",       snprint_path_lunhex},
+	{'A', "TPG",           snprint_alua_tpg},
+	{'k', "max_sectors_kb",snprint_path_max_sectors_kb},
+};
+
+static const struct pathgroup_data pgd[] = {
+	{'s', "selector",      snprint_pg_selector},
+	{'p', "pri",           snprint_pg_pri},
+	{'t', "dm_st",         snprint_pg_state},
+	{'M', "marginal_st",   snprint_pg_marginal},
+};
+
+int snprint_wildcards(struct strbuf *buff)
+{
+	int initial_len = get_strbuf_len(buff);
+	unsigned int i;
+	int rc;
+
+	if ((rc = append_strbuf_str(buff, "multipath format wildcards:\n")) < 0)
+		return rc;
+	for (i = 0; i < ARRAY_SIZE(mpd); i++)
+		if ((rc = print_strbuf(buff, "%%%c  %s\n",
+				       mpd[i].wildcard, mpd[i].header)) < 0)
+			return rc;
+
+	if ((rc = append_strbuf_str(buff, "\npath format wildcards:\n")) < 0)
+		return rc;
+	for (i = 0; i < ARRAY_SIZE(pd); i++)
+		if ((rc = print_strbuf(buff, "%%%c  %s\n",
+				       pd[i].wildcard, pd[i].header)) < 0)
+			return rc;
+
+	return get_strbuf_len(buff) - initial_len;
+}
+
+fieldwidth_t *alloc_path_layout(void) {
+	return calloc(ARRAY_SIZE(pd), sizeof(fieldwidth_t));
+}
+
+void get_path_layout(vector pathvec, int header, fieldwidth_t *width)
 {
 	vector gpvec = vector_convert(NULL, pathvec, struct path,
 				      dm_path_to_gen);
 	_get_path_layout(gpvec,
-			 header ? LAYOUT_RESET_HEADER : LAYOUT_RESET_ZERO);
+			 header ? LAYOUT_RESET_HEADER : LAYOUT_RESET_ZERO,
+			 width);
 	vector_free(gpvec);
 }
 
 static void
-reset_width(unsigned int *width, enum layout_reset reset, const char *header)
+reset_width(fieldwidth_t *width, enum layout_reset reset, const char *header)
 {
 	switch (reset) {
 	case LAYOUT_RESET_HEADER:
@@ -828,343 +952,314 @@ reset_width(unsigned int *width, enum layout_reset reset, const char *header)
 	}
 }
 
-void
-_get_path_layout (const struct _vector *gpvec, enum layout_reset reset)
+void _get_path_layout (const struct _vector *gpvec, enum layout_reset reset,
+		       fieldwidth_t *width)
 {
-	int i, j;
-	char buff[MAX_FIELD_LEN];
+	unsigned int i, j;
 	const struct gen_path *gp;
 
-	for (j = 0; pd[j].header; j++) {
+	if (width == NULL)
+		return;
 
-		reset_width(&pd[j].width, reset, pd[j].header);
+	for (j = 0; j < ARRAY_SIZE(pd); j++) {
+		STRBUF_ON_STACK(buff);
+
+		reset_width(&width[j], reset, pd[j].header);
 
 		if (gpvec == NULL)
 			continue;
 
 		vector_foreach_slot (gpvec, gp, i) {
-			gp->ops->snprint(gp, buff, MAX_FIELD_LEN,
-					 pd[j].wildcard);
-			pd[j].width = MAX(pd[j].width, strlen(buff));
+			gp->ops->snprint(gp, &buff, pd[j].wildcard);
+			width[j] = MAX(width[j],
+				       MIN(get_strbuf_len(&buff), MAX_FIELD_WIDTH));
+			truncate_strbuf(&buff, 0);
 		}
 	}
 }
 
-static void
-reset_multipath_layout (void)
-{
-	int i;
+fieldwidth_t *alloc_multipath_layout(void) {
 
-	for (i = 0; mpd[i].header; i++)
-		mpd[i].width = 0;
+	return calloc(ARRAY_SIZE(mpd), sizeof(fieldwidth_t));
 }
 
-void
-get_multipath_layout (vector mpvec, int header) {
+void get_multipath_layout (vector mpvec, int header, fieldwidth_t *width) {
 	vector gmvec = vector_convert(NULL, mpvec, struct multipath,
 				      dm_multipath_to_gen);
 	_get_multipath_layout(gmvec,
-			 header ? LAYOUT_RESET_HEADER : LAYOUT_RESET_ZERO);
+			      header ? LAYOUT_RESET_HEADER : LAYOUT_RESET_ZERO,
+			      width);
 	vector_free(gmvec);
 }
 
 void
-_get_multipath_layout (const struct _vector *gmvec,
-			    enum layout_reset reset)
+_get_multipath_layout (const struct _vector *gmvec, enum layout_reset reset,
+		       fieldwidth_t *width)
 {
-	int i, j;
-	char buff[MAX_FIELD_LEN];
+	unsigned int i, j;
 	const struct gen_multipath * gm;
 
-	for (j = 0; mpd[j].header; j++) {
+	if (width == NULL)
+		return;
+	for (j = 0; j < ARRAY_SIZE(mpd); j++) {
+		STRBUF_ON_STACK(buff);
 
-		reset_width(&mpd[j].width, reset, mpd[j].header);
+		reset_width(&width[j], reset, mpd[j].header);
 
 		if (gmvec == NULL)
 			continue;
 
 		vector_foreach_slot (gmvec, gm, i) {
-			gm->ops->snprint(gm, buff, MAX_FIELD_LEN,
-					 mpd[j].wildcard);
-			mpd[j].width = MAX(mpd[j].width, strlen(buff));
+			gm->ops->snprint(gm, &buff, mpd[j].wildcard);
+			width[j] = MAX(width[j],
+				       MIN(get_strbuf_len(&buff), MAX_FIELD_WIDTH));
+			truncate_strbuf(&buff, 0);
 		}
-		condlog(4, "%s: width %d", mpd[j].header, mpd[j].width);
+		condlog(4, "%s: width %d", mpd[j].header, width[j]);
 	}
 }
 
-static struct multipath_data *
-mpd_lookup(char wildcard)
+static int mpd_lookup(char wildcard)
 {
-	int i;
+	unsigned int i;
 
-	for (i = 0; mpd[i].header; i++)
+	for (i = 0; i < ARRAY_SIZE(mpd); i++)
 		if (mpd[i].wildcard == wildcard)
-			return &mpd[i];
+			return i;
 
-	return NULL;
+	return -1;
 }
 
 int snprint_multipath_attr(const struct gen_multipath* gm,
-			   char *buf, int len, char wildcard)
+			   struct strbuf *buf, char wildcard)
 {
 	const struct multipath *mpp = gen_multipath_to_dm(gm);
-	struct multipath_data *mpd = mpd_lookup(wildcard);
+	int i = mpd_lookup(wildcard);
 
-	if (mpd == NULL)
+	if (i == -1)
 		return 0;
-	return mpd->snprint(buf, len, mpp);
+	return mpd[i].snprint(buf, mpp);
 }
 
-static struct path_data *
-pd_lookup(char wildcard)
+static int pd_lookup(char wildcard)
 {
-	int i;
+	unsigned int i;
 
-	for (i = 0; pd[i].header; i++)
+	for (i = 0; i < ARRAY_SIZE(pd); i++)
 		if (pd[i].wildcard == wildcard)
-			return &pd[i];
+			return i;
 
-	return NULL;
+	return -1;
 }
 
 int snprint_path_attr(const struct gen_path* gp,
-		      char *buf, int len, char wildcard)
+		      struct strbuf *buf, char wildcard)
 {
 	const struct path *pp = gen_path_to_dm(gp);
-	struct path_data *pd = pd_lookup(wildcard);
+	int i = pd_lookup(wildcard);
 
-	if (pd == NULL)
+	if (i == -1)
 		return 0;
-	return pd->snprint(buf, len, pp);
+	return pd[i].snprint(buf, pp);
 }
 
-static struct pathgroup_data *
-pgd_lookup(char wildcard)
+static int pgd_lookup(char wildcard)
 {
-	int i;
+	unsigned int i;
 
-	for (i = 0; pgd[i].header; i++)
+	for (i = 0; i < ARRAY_SIZE(pgd); i++)
 		if (pgd[i].wildcard == wildcard)
-			return &pgd[i];
+			return i;
 
-	return NULL;
+	return -1;
 }
 
 int snprint_pathgroup_attr(const struct gen_pathgroup* gpg,
-			   char *buf, int len, char wildcard)
+			   struct strbuf *buf, char wildcard)
 {
 	const struct pathgroup *pg = gen_pathgroup_to_dm(gpg);
-	struct pathgroup_data *pdg = pgd_lookup(wildcard);
+	int i = pgd_lookup(wildcard);
 
-	if (pdg == NULL)
+	if (i == -1)
 		return 0;
-	return pdg->snprint(buf, len, pg);
+	return pgd[i].snprint(buf, pg);
 }
 
-int
-snprint_multipath_header (char * line, int len, const char * format)
+int snprint_multipath_header(struct strbuf *line, const char *format,
+			     const fieldwidth_t *width)
 {
-	char * c = line;   /* line cursor */
-	char * s = line;   /* for padding */
-	const char * f = format; /* format string cursor */
-	int fwd;
-	struct multipath_data * data;
+	int initial_len = get_strbuf_len(line);
+	const char *f;
+	const struct multipath_data * data;
+	int rc;
 
-	do {
-		if (TAIL <= 0)
-			break;
+	for (f = strchr(format, '%'); f; f = strchr(++format, '%')) {
+		int iwc;
 
-		if (*f != '%') {
-			*c++ = *f;
-			NOPAD;
-			continue;
-		}
-		f++;
+		if ((rc = __append_strbuf_str(line, format, f - format)) < 0)
+			return rc;
 
-		if (!(data = mpd_lookup(*f)))
+		format = f + 1;
+		if ((iwc = mpd_lookup(*format)) == -1)
+			continue; /* unknown wildcard */
+		data = &mpd[iwc];
+
+		if ((rc = append_strbuf_str(line, data->header)) < 0)
+			return rc;
+		else if ((unsigned int)rc < width[iwc])
+			if ((rc = fill_strbuf(line, ' ', width[iwc] - rc)) < 0)
+				return rc;
+	}
+
+	if ((rc = print_strbuf(line, "%s\n", format)) < 0)
+		return rc;
+	return get_strbuf_len(line) - initial_len;
+}
+
+int _snprint_multipath(const struct gen_multipath *gmp,
+		       struct strbuf *line, const char *format,
+		       const fieldwidth_t *width)
+{
+	int initial_len = get_strbuf_len(line);
+	const char *f;
+	int rc;
+
+	for (f = strchr(format, '%'); f; f = strchr(++format, '%')) {
+		int iwc;
+
+		if ((rc = __append_strbuf_str(line, format, f - format)) < 0)
+			return rc;
+
+		format = f + 1;
+		if ((iwc = mpd_lookup(*format)) == -1)
 			continue; /* unknown wildcard */
 
-		PRINT(c, TAIL, "%s", data->header);
-		PAD(data->width);
-	} while (*f++);
+		if ((rc = gmp->ops->snprint(gmp, line, *format)) < 0)
+			return rc;
+		else if (width != NULL && (unsigned int)rc < width[iwc])
+			if ((rc = fill_strbuf(line, ' ', width[iwc] - rc)) < 0)
+				return rc;
+	}
 
-	__endline(line, len, c);
-	return (c - line);
+	if ((rc = print_strbuf(line, "%s\n", format)) < 0)
+		return rc;
+	return get_strbuf_len(line) - initial_len;
 }
 
-int
-_snprint_multipath (const struct gen_multipath * gmp,
-		    char * line, int len, const char * format, int pad)
+int snprint_path_header(struct strbuf *line, const char *format,
+			const fieldwidth_t *width)
 {
-	char * c = line;   /* line cursor */
-	char * s = line;   /* for padding */
-	const char * f = format; /* format string cursor */
-	int fwd;
-	struct multipath_data * data;
-	char buff[MAX_FIELD_LEN] = {};
+	int initial_len = get_strbuf_len(line);
+	const char *f;
+	const struct path_data *data;
+	int rc;
 
-	do {
-		if (TAIL <= 0)
-			break;
+	for (f = strchr(format, '%'); f; f = strchr(++format, '%')) {
+		int iwc;
 
-		if (*f != '%') {
-			*c++ = *f;
-			NOPAD;
-			continue;
-		}
-		f++;
+		if ((rc = __append_strbuf_str(line, format, f - format)) < 0)
+			return rc;
 
-		if (!(data = mpd_lookup(*f)))
-			continue;
+		format = f + 1;
+		if ((iwc = pd_lookup(*format)) == -1)
+			continue; /* unknown wildcard */
+		data = &pd[iwc];
 
-		gmp->ops->snprint(gmp, buff, MAX_FIELD_LEN, *f);
-		PRINT(c, TAIL, "%s", buff);
-		if (pad)
-			PAD(data->width);
-		buff[0] = '\0';
-	} while (*f++);
+		if ((rc = append_strbuf_str(line, data->header)) < 0)
+			return rc;
+		else if ((unsigned int)rc < width[iwc])
+			if ((rc = fill_strbuf(line, ' ', width[iwc] - rc)) < 0)
+				return rc;
+	}
 
-	__endline(line, len, c);
-	return (c - line);
+	if ((rc = print_strbuf(line, "%s\n", format)) < 0)
+		return rc;
+	return get_strbuf_len(line) - initial_len;
 }
 
-int
-snprint_path_header (char * line, int len, const char * format)
+int _snprint_path(const struct gen_path *gp, struct strbuf *line,
+		  const char *format, const fieldwidth_t *width)
 {
-	char * c = line;   /* line cursor */
-	char * s = line;   /* for padding */
-	const char * f = format; /* format string cursor */
-	int fwd;
-	struct path_data * data;
+	int initial_len = get_strbuf_len(line);
+	const char *f;
+	int rc;
 
-	do {
-		if (TAIL <= 0)
-			break;
+	for (f = strchr(format, '%'); f; f = strchr(++format, '%')) {
+		int iwc;
 
-		if (*f != '%') {
-			*c++ = *f;
-			NOPAD;
-			continue;
-		}
-		f++;
+		if ((rc = __append_strbuf_str(line, format, f - format)) < 0)
+			return rc;
 
-		if (!(data = pd_lookup(*f)))
+		format = f + 1;
+		if ((iwc = pd_lookup(*format)) == -1)
 			continue; /* unknown wildcard */
 
-		PRINT(c, TAIL, "%s", data->header);
-		PAD(data->width);
-	} while (*f++);
+		if ((rc = gp->ops->snprint(gp, line, *format)) < 0)
+			return rc;
+		else if (width != NULL && (unsigned int)rc < width[iwc])
+			if ((rc = fill_strbuf(line, ' ', width[iwc] - rc)) < 0)
+				return rc;
+	}
 
-	__endline(line, len, c);
-	return (c - line);
+	if ((rc = print_strbuf(line, "%s\n", format)) < 0)
+		return rc;
+	return get_strbuf_len(line) - initial_len;
 }
 
-int
-_snprint_path (const struct gen_path * gp, char * line, int len,
-	       const char * format, int pad)
+int _snprint_pathgroup(const struct gen_pathgroup *ggp, struct strbuf *line,
+		       const char *format)
 {
-	char * c = line;   /* line cursor */
-	char * s = line;   /* for padding */
-	const char * f = format; /* format string cursor */
-	int fwd;
-	struct path_data * data;
-	char buff[MAX_FIELD_LEN];
+	int initial_len = get_strbuf_len(line);
+	const char *f;
+	int rc;
 
-	do {
-		if (TAIL <= 0)
-			break;
+	for (f = strchr(format, '%'); f; f = strchr(++format, '%')) {
+		if ((rc = __append_strbuf_str(line, format, f - format)) < 0)
+			return rc;
 
-		if (*f != '%') {
-			*c++ = *f;
-			NOPAD;
-			continue;
-		}
-		f++;
+		format = f + 1;
 
-		if (!(data = pd_lookup(*f)))
-			continue;
+		if ((rc = ggp->ops->snprint(ggp, line, *format)) < 0)
+			return rc;
+	}
 
-		gp->ops->snprint(gp, buff, MAX_FIELD_LEN, *f);
-		PRINT(c, TAIL, "%s", buff);
-		if (pad)
-			PAD(data->width);
-	} while (*f++);
-
-	__endline(line, len, c);
-	return (c - line);
+	if ((rc = print_strbuf(line, "%s\n", format)) < 0)
+		return rc;
+	return get_strbuf_len(line) - initial_len;
 }
 
-int
-_snprint_pathgroup (const struct gen_pathgroup * ggp, char * line, int len,
-		    char * format)
-{
-	char * c = line;   /* line cursor */
-	char * s = line;   /* for padding */
-	char * f = format; /* format string cursor */
-	int fwd;
-	struct pathgroup_data * data;
-	char buff[MAX_FIELD_LEN];
-
-	do {
-		if (TAIL <= 0)
-			break;
-
-		if (*f != '%') {
-			*c++ = *f;
-			NOPAD;
-			continue;
-		}
-		f++;
-
-		if (!(data = pgd_lookup(*f)))
-			continue;
-
-		ggp->ops->snprint(ggp, buff, MAX_FIELD_LEN, *f);
-		PRINT(c, TAIL, "%s", buff);
-		PAD(data->width);
-	} while (*f++);
-
-	__endline(line, len, c);
-	return (c - line);
-}
-#define snprint_pathgroup(line, len, fmt, pgp) \
-	_snprint_pathgroup(dm_pathgroup_to_gen(pgp), line, len, fmt)
+#define snprint_pathgroup(line, fmt, pgp)				\
+	_snprint_pathgroup(dm_pathgroup_to_gen(pgp), line, fmt)
 
 void _print_multipath_topology(const struct gen_multipath *gmp, int verbosity)
 {
-	int resize;
-	char *buff = NULL;
-	char *old = NULL;
-	int len, maxlen = MAX_LINE_LEN * MAX_LINES;
+	STRBUF_ON_STACK(buff);
+	fieldwidth_t *p_width __attribute__((cleanup(cleanup_ucharp))) = NULL;
+	const struct gen_pathgroup *gpg;
+	const struct _vector *pgvec, *pathvec;
+	int j;
 
-	buff = MALLOC(maxlen);
-	do {
-		if (!buff) {
-			if (old)
-				FREE(old);
-			condlog(0, "couldn't allocate memory for list: %s\n",
-				strerror(errno));
-			return;
+	p_width = alloc_path_layout();
+	pgvec = gmp->ops->get_pathgroups(gmp);
+
+	if (pgvec != NULL) {
+		vector_foreach_slot (pgvec, gpg, j) {
+			pathvec = gpg->ops->get_paths(gpg);
+			if (pathvec == NULL)
+				continue;
+			_get_path_layout(pathvec, LAYOUT_RESET_NOT, p_width);
+			gpg->ops->rel_paths(gpg, pathvec);
 		}
+		gmp->ops->rel_pathgroups(gmp, pgvec);
+	}
 
-		len = _snprint_multipath_topology(gmp, buff, maxlen, verbosity);
-		resize = (len == maxlen - 1);
-
-		if (resize) {
-			maxlen *= 2;
-			old = buff;
-			buff = REALLOC(buff, maxlen);
-		}
-	} while (resize);
-	printf("%s", buff);
-	FREE(buff);
+	_snprint_multipath_topology(gmp, &buff, verbosity, p_width);
+	printf("%s", get_strbuf_str(&buff));
 }
 
-int
-snprint_multipath_style(const struct gen_multipath *gmp, char *style, int len,
-			int verbosity)
+int snprint_multipath_style(const struct gen_multipath *gmp,
+			    struct strbuf *style, int verbosity)
 {
-	int n;
 	const struct multipath *mpp = gen_multipath_to_dm(gmp);
 	bool need_action = (verbosity > 1 &&
 			    mpp->action != ACT_NOTHING &&
@@ -1172,381 +1267,348 @@ snprint_multipath_style(const struct gen_multipath *gmp, char *style, int len,
 			    mpp->action != ACT_IMPOSSIBLE);
 	bool need_wwid = (strncmp(mpp->alias, mpp->wwid, WWID_SIZE));
 
-	n = snprintf(style, len, "%s%s%s%s",
-		     need_action ? "%A: " : "", "%n",
-		     need_wwid ? " (%w)" : "", " %d %s");
-	return MIN(n, len - 1);
+	return print_strbuf(style, "%s%s%s%s",
+			    need_action ? "%A: " : "", "%n",
+			    need_wwid ? " (%w)" : "", " %d %s");
 }
 
 int _snprint_multipath_topology(const struct gen_multipath *gmp,
-				char *buff, int len, int verbosity)
+				struct strbuf *buff, int verbosity,
+				const fieldwidth_t *p_width)
 {
-	int j, i, fwd = 0;
+	int j, i, rc;
 	const struct _vector *pgvec;
 	const struct gen_pathgroup *gpg;
-	char style[64];
-	char * c = style;
-	char fmt[64];
-	char * f;
+	STRBUF_ON_STACK(style);
+	size_t initial_len = get_strbuf_len(buff);
+	fieldwidth_t *width __attribute__((cleanup(cleanup_ucharp))) = NULL;
 
 	if (verbosity <= 0)
-		return fwd;
+		return 0;
 
-	reset_multipath_layout();
+	if ((width = alloc_multipath_layout()) == NULL)
+		return -ENOMEM;
 
 	if (verbosity == 1)
-		return _snprint_multipath(gmp, buff, len, "%n", 1);
+		return _snprint_multipath(gmp, buff, "%n", width);
 
-	if(isatty(1))
-		c += sprintf(c, "%c[%dm", 0x1B, 1); /* bold on */
+	if(isatty(1) &&
+	   (rc = print_strbuf(&style, "%c[%dm", 0x1B, 1)) < 0) /* bold on */
+		return rc;
+	if ((rc = gmp->ops->style(gmp, &style, verbosity)) < 0)
+		return rc;
+	if(isatty(1) &&
+	   (rc = print_strbuf(&style, "%c[%dm", 0x1B, 0)) < 0) /* bold off */
+		return rc;
 
-	c += gmp->ops->style(gmp, c, sizeof(style) - (c - style),
-			     verbosity);
-	if(isatty(1))
-		c += sprintf(c, "%c[%dm", 0x1B, 0); /* bold off */
-
-	fwd += _snprint_multipath(gmp, buff + fwd, len - fwd, style, 1);
-	if (fwd >= len)
-		return len;
-	fwd += _snprint_multipath(gmp, buff + fwd, len - fwd,
-				  PRINT_MAP_PROPS, 1);
-	if (fwd >= len)
-		return len;
+	if ((rc = _snprint_multipath(gmp, buff, get_strbuf_str(&style), width)) < 0
+	    || (rc = _snprint_multipath(gmp, buff, PRINT_MAP_PROPS, width)) < 0)
+		return rc;
 
 	pgvec = gmp->ops->get_pathgroups(gmp);
 	if (pgvec == NULL)
-		return fwd;
+		goto out;
 
 	vector_foreach_slot (pgvec, gpg, j) {
 		const struct _vector *pathvec;
 		struct gen_path *gp;
+		bool last_group = j + 1 == VECTOR_SIZE(pgvec);
 
-		f=fmt;
-
-		if (j + 1 < VECTOR_SIZE(pgvec)) {
-			strcpy(f, "|-+- " PRINT_PG_INDENT);
-		} else
-			strcpy(f, "`-+- " PRINT_PG_INDENT);
-		fwd += _snprint_pathgroup(gpg, buff + fwd, len - fwd, fmt);
-
-		if (fwd >= len) {
-			fwd = len;
-			break;
-		}
+		if ((rc = print_strbuf(buff, "%c-+- ",
+				       last_group ? '`' : '|')) < 0 ||
+		    (rc = _snprint_pathgroup(gpg, buff, PRINT_PG_INDENT)) < 0)
+			return rc;
 
 		pathvec = gpg->ops->get_paths(gpg);
 		if (pathvec == NULL)
 			continue;
 
 		vector_foreach_slot (pathvec, gp, i) {
-			f=fmt;
-			if (*f != '|')
-				*f=' ';
-			f++;
-			if (i + 1 < VECTOR_SIZE(pathvec))
-				strcpy(f, " |- " PRINT_PATH_INDENT);
-			else
-				strcpy(f, " `- " PRINT_PATH_INDENT);
-			fwd += _snprint_path(gp, buff + fwd, len - fwd, fmt, 1);
-			if (fwd >= len) {
-				fwd = len;
-				break;
-			}
+			if ((rc = print_strbuf(buff, "%c %c- ",
+					       last_group ? ' ' : '|',
+					       i + 1 == VECTOR_SIZE(pathvec) ?
+					       '`': '|')) < 0 ||
+			    (rc = _snprint_path(gp, buff,
+						PRINT_PATH_INDENT, p_width)) < 0)
+				return rc;
 		}
 		gpg->ops->rel_paths(gpg, pathvec);
-
-		if (fwd == len)
-			break;
 	}
+
 	gmp->ops->rel_pathgroups(gmp, pgvec);
-	return fwd;
+out:
+	return get_strbuf_len(buff) - initial_len;
 }
 
 
 static int
-snprint_json (char * buff, int len, int indent, char *json_str)
+snprint_json(struct strbuf *buff, int indent, const char *json_str)
 {
-	int fwd = 0, i;
+	int rc;
 
-	for (i = 0; i < indent; i++) {
-		fwd += snprintf(buff + fwd, len - fwd, PRINT_JSON_INDENT);
-		if (fwd >= len)
-			return fwd;
-	}
+	if ((rc = fill_strbuf(buff, ' ', indent * PRINT_JSON_INDENT_N)) < 0)
+		return rc;
 
-	fwd += snprintf(buff + fwd, len - fwd, "%s", json_str);
-	return fwd;
+	return append_strbuf_str(buff, json_str);
 }
 
-static int
-snprint_json_header (char * buff, int len)
+static int snprint_json_header(struct strbuf *buff)
 {
-	int fwd = 0;
+	int rc;
 
-	fwd +=  snprint_json(buff, len, 0, PRINT_JSON_START_ELEM);
-	if (fwd >= len)
-		return fwd;
-
-	fwd +=  snprintf(buff + fwd, len  - fwd, PRINT_JSON_START_VERSION,
-			PRINT_JSON_MAJOR_VERSION, PRINT_JSON_MINOR_VERSION);
-	return fwd;
+	if ((rc = snprint_json(buff, 0, PRINT_JSON_START_ELEM)) < 0)
+		return rc;
+	return print_strbuf(buff, PRINT_JSON_START_VERSION,
+			    PRINT_JSON_MAJOR_VERSION, PRINT_JSON_MINOR_VERSION);
 }
 
-static int
-snprint_json_elem_footer (char * buff, int len, int indent, int last)
+static int snprint_json_elem_footer(struct strbuf *buff, int indent, bool last)
 {
-	int fwd = 0, i;
+	int rc;
 
-	for (i = 0; i < indent; i++) {
-		fwd += snprintf(buff + fwd, len - fwd, PRINT_JSON_INDENT);
-		if (fwd >= len)
-			return fwd;
-	}
+	if ((rc = fill_strbuf(buff, ' ', indent * PRINT_JSON_INDENT_N)) < 0)
+		return rc;
 
-	if (last == 1)
-		fwd += snprintf(buff + fwd, len - fwd, "%s", PRINT_JSON_END_LAST_ELEM);
+	if (last)
+		return append_strbuf_str(buff, PRINT_JSON_END_LAST_ELEM);
 	else
-		fwd += snprintf(buff + fwd, len - fwd, "%s", PRINT_JSON_END_ELEM);
-	return fwd;
+		return append_strbuf_str(buff, PRINT_JSON_END_ELEM);
 }
 
-static int
-snprint_multipath_fields_json (char * buff, int len,
-		const struct multipath * mpp, int last)
+static int snprint_multipath_fields_json(struct strbuf *buff,
+					 const struct multipath *mpp, int last)
 {
-	int i, j, fwd = 0;
+	int i, j, rc;
 	struct path *pp;
 	struct pathgroup *pgp;
+	size_t initial_len = get_strbuf_len(buff);
 
-	fwd += snprint_multipath(buff, len, PRINT_JSON_MAP, mpp, 0);
-	if (fwd >= len)
-		return fwd;
-
-	fwd += snprint_json(buff + fwd, len - fwd, 2, PRINT_JSON_START_GROUPS);
-	if (fwd >= len)
-		return fwd;
+	if ((rc = snprint_multipath(buff, PRINT_JSON_MAP, mpp, 0)) < 0 ||
+	    (rc = snprint_json(buff, 2, PRINT_JSON_START_GROUPS)) < 0)
+		return rc;
 
 	vector_foreach_slot (mpp->pg, pgp, i) {
 
-		fwd += snprint_pathgroup(buff + fwd, len - fwd, PRINT_JSON_GROUP, pgp);
-		if (fwd >= len)
-			return fwd;
-
-		fwd += snprintf(buff + fwd, len - fwd, PRINT_JSON_GROUP_NUM, i + 1);
-		if (fwd >= len)
-			return fwd;
-
-		fwd += snprint_json(buff + fwd, len - fwd, 3, PRINT_JSON_START_PATHS);
-		if (fwd >= len)
-			return fwd;
+		if ((rc = snprint_pathgroup(buff, PRINT_JSON_GROUP, pgp)) < 0 ||
+		    (rc = print_strbuf(buff, PRINT_JSON_GROUP_NUM, i + 1)) < 0 ||
+		    (rc = snprint_json(buff, 3, PRINT_JSON_START_PATHS)) < 0)
+			return rc;
 
 		vector_foreach_slot (pgp->paths, pp, j) {
-			fwd += snprint_path(buff + fwd, len - fwd, PRINT_JSON_PATH, pp, 0);
-			if (fwd >= len)
-				return fwd;
-
-			fwd += snprint_json_elem_footer(buff + fwd,
-					len - fwd, 3, j + 1 == VECTOR_SIZE(pgp->paths));
-			if (fwd >= len)
-				return fwd;
+			if ((rc = snprint_path(buff, PRINT_JSON_PATH,
+					       pp, 0)) < 0 ||
+			    (rc = snprint_json_elem_footer(
+				    buff, 3,
+				    j + 1 == VECTOR_SIZE(pgp->paths))) < 0)
+				return rc;
 		}
-		fwd += snprint_json(buff + fwd, len - fwd, 0, PRINT_JSON_END_ARRAY);
-		if (fwd >= len)
-			return fwd;
-
-		fwd +=  snprint_json_elem_footer(buff + fwd,
-				len - fwd, 2, i + 1 == VECTOR_SIZE(mpp->pg));
-		if (fwd >= len)
-			return fwd;
+		if ((rc = snprint_json(buff, 0, PRINT_JSON_END_ARRAY)) < 0 ||
+		    (rc = snprint_json_elem_footer(
+			    buff, 2, i + 1 == VECTOR_SIZE(mpp->pg))) < 0)
+			return rc;
 	}
 
-	fwd += snprint_json(buff + fwd, len - fwd, 0, PRINT_JSON_END_ARRAY);
-	if (fwd >= len)
-		return fwd;
+	if ((rc = snprint_json(buff, 0, PRINT_JSON_END_ARRAY)) < 0 ||
+	    (rc = snprint_json_elem_footer(buff, 1, last)) < 0)
+		return rc;
 
-	fwd += snprint_json_elem_footer(buff + fwd, len - fwd, 1, last);
-	return fwd;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-int
-snprint_multipath_map_json (char * buff, int len, const struct multipath * mpp)
+int snprint_multipath_map_json(struct strbuf *buff, const struct multipath * mpp)
 {
-	int fwd = 0;
+	size_t initial_len = get_strbuf_len(buff);
+	int rc;
 
-	fwd +=  snprint_json_header(buff, len);
-	if (fwd >= len)
-		return len;
+	if ((rc = snprint_json_header(buff)) < 0 ||
+	    (rc = snprint_json(buff, 0, PRINT_JSON_START_MAP)) < 0)
+		return rc;
 
-	fwd +=  snprint_json(buff + fwd, len - fwd, 0, PRINT_JSON_START_MAP);
-	if (fwd >= len)
-		return len;
+	if ((rc = snprint_multipath_fields_json(buff, mpp, 1)) < 0)
+		return rc;
 
-	fwd += snprint_multipath_fields_json(buff + fwd, len - fwd, mpp, 1);
-	if (fwd >= len)
-		return len;
+	if ((rc = snprint_json(buff, 0, "\n")) < 0 ||
+	    (rc = snprint_json(buff, 0, PRINT_JSON_END_LAST)) < 0)
+		return rc;
 
-	fwd +=  snprint_json(buff + fwd, len - fwd, 0, "\n");
-	if (fwd >= len)
-		return len;
-
-	fwd +=  snprint_json(buff + fwd, len - fwd, 0, PRINT_JSON_END_LAST);
-	if (fwd >= len)
-		return len;
-	return fwd;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-int
-snprint_multipath_topology_json (char * buff, int len, const struct vectors * vecs)
+int snprint_multipath_topology_json (struct strbuf *buff,
+				     const struct vectors * vecs)
 {
-	int i, fwd = 0;
+	int i;
 	struct multipath * mpp;
+	size_t initial_len = get_strbuf_len(buff);
+	int rc;
 
-	fwd +=  snprint_json_header(buff, len);
-	if (fwd >= len)
-		return len;
-
-	fwd +=  snprint_json(buff + fwd, len  - fwd, 1, PRINT_JSON_START_MAPS);
-	if (fwd >= len)
-		return len;
+	if ((rc = snprint_json_header(buff)) < 0 ||
+	    (rc = snprint_json(buff, 1, PRINT_JSON_START_MAPS)) < 0)
+		return rc;
 
 	vector_foreach_slot(vecs->mpvec, mpp, i) {
-		fwd += snprint_multipath_fields_json(buff + fwd, len - fwd,
-				mpp, i + 1 == VECTOR_SIZE(vecs->mpvec));
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_multipath_fields_json(
+			     buff, mpp, i + 1 == VECTOR_SIZE(vecs->mpvec))) < 0)
+			return rc;
 	}
 
-	fwd +=  snprint_json(buff + fwd, len - fwd, 0, PRINT_JSON_END_ARRAY);
-	if (fwd >= len)
-		return len;
+	if ((rc = snprint_json(buff, 0, PRINT_JSON_END_ARRAY)) < 0 ||
+	    (rc = snprint_json(buff, 0, PRINT_JSON_END_LAST)) < 0)
+		return rc;
 
-	fwd +=  snprint_json(buff + fwd, len - fwd, 0, PRINT_JSON_END_LAST);
-	if (fwd >= len)
-		return len;
-	return fwd;
+	return get_strbuf_len(buff) - initial_len;
+}
+
+static int
+snprint_pcentry (const struct config *conf, struct strbuf *buff,
+		 const struct pcentry *pce)
+{
+	int i, rc;
+	struct keyword *kw;
+	struct keyword * rootkw;
+	size_t initial_len = get_strbuf_len(buff);
+
+	rootkw = find_keyword(conf->keywords, NULL, "overrides");
+	assert(rootkw && rootkw->sub);
+	rootkw = find_keyword(conf->keywords, rootkw->sub, "protocol");
+	assert(rootkw);
+
+	if ((rc = append_strbuf_str(buff, "\tprotocol {\n")) < 0)
+		return rc;
+
+	iterate_sub_keywords(rootkw, kw, i) {
+		if ((rc = snprint_keyword(buff, "\t\t%k %v\n", kw, pce)) < 0)
+			return rc;
+	}
+
+	if ((rc = append_strbuf_str(buff, "\t}\n")) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
+}
+
+static int
+snprint_pctable (const struct config *conf, struct strbuf *buff,
+		 const struct _vector *pctable)
+{
+	int i, rc;
+	struct pcentry *pce;
+	struct keyword * rootkw;
+	size_t initial_len = get_strbuf_len(buff);
+
+	rootkw = find_keyword(conf->keywords, NULL, "overrides");
+	assert(rootkw);
+
+	vector_foreach_slot(pctable, pce, i) {
+		if ((rc = snprint_pcentry(conf, buff, pce)) < 0)
+			return rc;
+	}
+	return get_strbuf_len(buff) - initial_len;
 }
 
 static int
 snprint_hwentry (const struct config *conf,
-		 char * buff, int len, const struct hwentry * hwe)
+		 struct strbuf *buff, const struct hwentry * hwe)
 {
-	int i;
-	int fwd = 0;
+	int i, rc;
 	struct keyword * kw;
 	struct keyword * rootkw;
+	size_t initial_len = get_strbuf_len(buff);
 
 	rootkw = find_keyword(conf->keywords, NULL, "devices");
-
-	if (!rootkw || !rootkw->sub)
-		return 0;
-
+	assert(rootkw && rootkw->sub);
 	rootkw = find_keyword(conf->keywords, rootkw->sub, "device");
+	assert(rootkw);
 
-	if (!rootkw)
-		return 0;
+	if ((rc = append_strbuf_str(buff, "\tdevice {\n")) < 0)
+		return rc;
 
-	fwd += snprintf(buff + fwd, len - fwd, "\tdevice {\n");
-	if (fwd >= len)
-		return len;
 	iterate_sub_keywords(rootkw, kw, i) {
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t\t%k %v\n",
-				kw, hwe);
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_keyword(buff, "\t\t%k %v\n", kw, hwe)) < 0)
+			return rc;
 	}
-	fwd += snprintf(buff + fwd, len - fwd, "\t}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+	if ((rc = append_strbuf_str(buff, "\t}\n")) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-static int snprint_hwtable(const struct config *conf,
-			   char *buff, int len,
+static int snprint_hwtable(const struct config *conf, struct strbuf *buff,
 			   const struct _vector *hwtable)
 {
-	int fwd = 0;
-	int i;
+	int i, rc;
 	struct hwentry * hwe;
 	struct keyword * rootkw;
+	size_t initial_len = get_strbuf_len(buff);
 
 	rootkw = find_keyword(conf->keywords, NULL, "devices");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
 
-	fwd += snprintf(buff + fwd, len - fwd, "devices {\n");
-	if (fwd >= len)
-		return len;
+	if ((rc = append_strbuf_str(buff, "devices {\n")) < 0)
+		return rc;
+
 	vector_foreach_slot (hwtable, hwe, i) {
-		fwd += snprint_hwentry(conf, buff + fwd, len - fwd, hwe);
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_hwentry(conf, buff, hwe)) < 0)
+			return rc;
 	}
-	fwd += snprintf(buff + fwd, len - fwd, "}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+
+	if ((rc = append_strbuf_str(buff, "}\n")) < 0)
+		return rc;
+
+	return get_strbuf_len(buff) - initial_len;
 }
 
 static int
-snprint_mpentry (const struct config *conf, char * buff, int len,
+snprint_mpentry (const struct config *conf, struct strbuf *buff,
 		 const struct mpentry * mpe, const struct _vector *mpvec)
 {
-	int i;
-	int fwd = 0;
+	int i, rc;
 	struct keyword * kw;
 	struct keyword * rootkw;
 	struct multipath *mpp = NULL;
+	size_t initial_len = get_strbuf_len(buff);
 
 	if (mpvec != NULL && (mpp = find_mp_by_wwid(mpvec, mpe->wwid)) == NULL)
 		return 0;
 
 	rootkw = find_keyword(conf->keywords, NULL, "multipath");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
 
-	fwd += snprintf(buff + fwd, len - fwd, "\tmultipath {\n");
-	if (fwd >= len)
-		return len;
+	if ((rc = append_strbuf_str(buff, "\tmultipath {\n")) < 0)
+		return rc;
+
 	iterate_sub_keywords(rootkw, kw, i) {
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t\t%k %v\n",
-				kw, mpe);
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_keyword(buff, "\t\t%k %v\n", kw, mpe)) < 0)
+			return rc;
 	}
 	/*
 	 * This mpp doesn't have alias defined. Add the alias in a comment.
 	 */
-	if (mpp != NULL && strcmp(mpp->alias, mpp->wwid)) {
-		fwd += snprintf(buff + fwd, len - fwd, "\t\t# alias \"%s\"\n",
-				mpp->alias);
-		if (fwd >= len)
-			return len;
-	}
-	fwd += snprintf(buff + fwd, len - fwd, "\t}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+	if (mpp != NULL && strcmp(mpp->alias, mpp->wwid) &&
+	    (rc = print_strbuf(buff, "\t\t# alias \"%s\"\n", mpp->alias)) < 0)
+		return rc;
+
+	if ((rc = append_strbuf_str(buff, "\t}\n")) < 0)
+		return rc;
+
+	return get_strbuf_len(buff) - initial_len;
 }
 
-static int snprint_mptable(const struct config *conf,
-			   char *buff, int len, const struct _vector *mpvec)
+static int snprint_mptable(const struct config *conf, struct strbuf *buff,
+			   const struct _vector *mpvec)
 {
-	int fwd = 0;
-	int i;
+	int i, rc;
 	struct mpentry * mpe;
 	struct keyword * rootkw;
+	size_t initial_len = get_strbuf_len(buff);
 
 	rootkw = find_keyword(conf->keywords, NULL, "multipaths");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
 
-	fwd += snprintf(buff + fwd, len - fwd, "multipaths {\n");
-	if (fwd >= len)
-		return len;
+	if ((rc = append_strbuf_str(buff, "multipaths {\n")) < 0)
+		return rc;
+
 	vector_foreach_slot (conf->mptable, mpe, i) {
-		fwd += snprint_mpentry(conf, buff + fwd, len - fwd, mpe, mpvec);
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_mpentry(conf, buff, mpe, mpvec)) < 0)
+			return rc;
 	}
 	if (mpvec != NULL) {
 		struct multipath *mpp;
@@ -1555,496 +1617,389 @@ static int snprint_mptable(const struct config *conf,
 			if (find_mpe(conf->mptable, mpp->wwid) != NULL)
 				continue;
 
-			fwd += snprintf(buff + fwd, len - fwd,
-					"\tmultipath {\n");
-			if (fwd >= len)
-				return len;
-			fwd += snprintf(buff + fwd, len - fwd,
-					"\t\twwid \"%s\"\n", mpp->wwid);
-			if (fwd >= len)
-				return len;
+			if ((rc = print_strbuf(buff,
+					       "\tmultipath {\n\t\twwid \"%s\"\n",
+					       mpp->wwid)) < 0)
+				return rc;
 			/*
 			 * This mpp doesn't have alias defined in
 			 * multipath.conf - otherwise find_mpe would have
 			 * found it. Add the alias in a comment.
 			 */
-			if (strcmp(mpp->alias, mpp->wwid)) {
-				fwd += snprintf(buff + fwd, len - fwd,
-						"\t\t# alias \"%s\"\n",
-						mpp->alias);
-				if (fwd >= len)
-					return len;
-			}
-			fwd += snprintf(buff + fwd, len - fwd, "\t}\n");
-			if (fwd >= len)
-				return len;
+			if (strcmp(mpp->alias, mpp->wwid) &&
+			    (rc = print_strbuf(buff, "\t\t# alias \"%s\"\n",
+					       mpp->alias)) < 0)
+				return rc;
+			if ((rc = append_strbuf_str(buff, "\t}\n")) < 0)
+				return rc;
 		}
 	}
-	fwd += snprintf(buff + fwd, len - fwd, "}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+	if ((rc = append_strbuf_str(buff, "}\n")) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-static int snprint_overrides(const struct config *conf, char * buff, int len,
+static int snprint_overrides(const struct config *conf, struct strbuf *buff,
 			     const struct hwentry *overrides)
 {
-	int fwd = 0;
-	int i;
+	int i, rc;
 	struct keyword *rootkw;
 	struct keyword *kw;
+	size_t initial_len = get_strbuf_len(buff);
 
 	rootkw = find_keyword(conf->keywords, NULL, "overrides");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
 
-	fwd += snprintf(buff + fwd, len - fwd, "overrides {\n");
-	if (fwd >= len)
-		return len;
+	if ((rc = append_strbuf_str(buff, "overrides {\n")) < 0)
+		return rc;
 	if (!overrides)
 		goto out;
+
 	iterate_sub_keywords(rootkw, kw, i) {
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, NULL);
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, NULL)) < 0)
+			return rc;
 	}
+
+	if (overrides->pctable &&
+	    (rc = snprint_pctable(conf, buff, overrides->pctable)) < 0)
+		return rc;
 out:
-	fwd += snprintf(buff + fwd, len - fwd, "}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+	if ((rc = append_strbuf_str(buff, "}\n")) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-static int snprint_defaults(const struct config *conf, char *buff, int len)
+static int snprint_defaults(const struct config *conf, struct strbuf *buff)
 {
-	int fwd = 0;
-	int i;
+	int i, rc;
 	struct keyword *rootkw;
 	struct keyword *kw;
+	size_t initial_len = get_strbuf_len(buff);
 
 	rootkw = find_keyword(conf->keywords, NULL, "defaults");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
 
-	fwd += snprintf(buff + fwd, len - fwd, "defaults {\n");
-	if (fwd >= len)
-		return len;
+	if ((rc = append_strbuf_str(buff, "defaults {\n")) < 0)
+		return rc;
 
 	iterate_sub_keywords(rootkw, kw, i) {
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				kw, NULL);
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, NULL)) < 0)
+			return rc;
 	}
-	fwd += snprintf(buff + fwd, len - fwd, "}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+	if ((rc = append_strbuf_str(buff, "}\n")) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-static int
-snprint_blacklist_group (char *buff, int len, int *fwd, vector *vec)
+static int snprint_blacklist_group(struct strbuf *buff, vector *vec)
 {
-	int threshold = MAX_LINE_LEN;
 	struct blentry * ble;
-	int pos;
-	int i;
+	size_t initial_len = get_strbuf_len(buff);
+	int rc, i;
 
-	pos = *fwd;
 	if (!VECTOR_SIZE(*vec)) {
-		if ((len - pos - threshold) <= 0)
-			return 0;
-		pos += snprintf(buff + pos, len - pos, "        <empty>\n");
+		if ((rc = append_strbuf_str(buff, "        <empty>\n")) < 0)
+			return rc;
 	} else vector_foreach_slot (*vec, ble, i) {
-		if ((len - pos - threshold) <= 0)
-			return 0;
-		if (ble->origin == ORIGIN_CONFIG)
-			pos += snprintf(buff + pos, len - pos, "        (config file rule) ");
-		else if (ble->origin == ORIGIN_DEFAULT)
-			pos += snprintf(buff + pos, len - pos, "        (default rule)     ");
-		pos += snprintf(buff + pos, len - pos, "%s\n", ble->str);
+		rc = print_strbuf(buff, "        %s %s\n",
+				   ble->origin == ORIGIN_CONFIG ?
+				   "(config file rule)" :
+				   "(default rule)    ", ble->str);
+		if (rc < 0)
+			return rc;
 	}
 
-	*fwd = pos;
-	return pos;
+	return get_strbuf_len(buff) - initial_len;
 }
 
 static int
-snprint_blacklist_devgroup (char *buff, int len, int *fwd, vector *vec)
+snprint_blacklist_devgroup (struct strbuf *buff, vector *vec)
 {
-	int threshold = MAX_LINE_LEN;
 	struct blentry_device * bled;
-	int pos;
-	int i;
+	size_t initial_len = get_strbuf_len(buff);
+	int rc, i;
 
-	pos = *fwd;
 	if (!VECTOR_SIZE(*vec)) {
-		if ((len - pos - threshold) <= 0)
-			return 0;
-		pos += snprintf(buff + pos, len - pos, "        <empty>\n");
+		if ((rc = append_strbuf_str(buff, "        <empty>\n")) < 0)
+			return rc;
 	} else vector_foreach_slot (*vec, bled, i) {
-		if ((len - pos - threshold) <= 0)
-			return 0;
-		if (bled->origin == ORIGIN_CONFIG)
-			pos += snprintf(buff + pos, len - pos, "        (config file rule) ");
-		else if (bled->origin == ORIGIN_DEFAULT)
-			pos += snprintf(buff + pos, len - pos, "        (default rule)     ");
-		pos += snprintf(buff + pos, len - pos, "%s:%s\n", bled->vendor, bled->product);
+		rc = print_strbuf(buff, "        %s %s:%s\n",
+				  bled->origin == ORIGIN_CONFIG ?
+				  "(config file rule)" :
+				  "(default rule)    ",
+				  bled->vendor, bled->product);
+		if (rc < 0)
+			return rc;
 	}
 
-	*fwd = pos;
-	return pos;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-int snprint_blacklist_report(struct config *conf, char *buff, int len)
+int snprint_blacklist_report(struct config *conf, struct strbuf *buff)
 {
-	int threshold = MAX_LINE_LEN;
-	int fwd = 0;
+	size_t initial_len = get_strbuf_len(buff);
+	int rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "device node rules:\n"
-					       "- blacklist:\n");
-	if (!snprint_blacklist_group(buff, len, &fwd, &conf->blist_devnode))
-		return len;
+	if ((rc = append_strbuf_str(buff, "device node rules:\n- blacklist:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->blist_devnode)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "- exceptions:\n");
-	if (snprint_blacklist_group(buff, len, &fwd, &conf->elist_devnode) == 0)
-		return len;
+	if ((rc = append_strbuf_str(buff, "- exceptions:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->elist_devnode)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "udev property rules:\n"
-					       "- blacklist:\n");
-	if (!snprint_blacklist_group(buff, len, &fwd, &conf->blist_property))
-		return len;
+	if ((rc = append_strbuf_str(buff, "udev property rules:\n- blacklist:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->blist_property)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "- exceptions:\n");
-	if (snprint_blacklist_group(buff, len, &fwd, &conf->elist_property) == 0)
-		return len;
+	if ((rc = append_strbuf_str(buff, "- exceptions:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->elist_property)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "protocol rules:\n"
-					       "- blacklist:\n");
-	if (!snprint_blacklist_group(buff, len, &fwd, &conf->blist_protocol))
-		return len;
+	if ((rc = append_strbuf_str(buff, "protocol rules:\n- blacklist:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->blist_protocol)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "- exceptions:\n");
-	if (snprint_blacklist_group(buff, len, &fwd, &conf->elist_protocol) == 0)
-		return len;
+	if ((rc = append_strbuf_str(buff, "- exceptions:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->elist_protocol)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "wwid rules:\n"
-					       "- blacklist:\n");
-	if (snprint_blacklist_group(buff, len, &fwd, &conf->blist_wwid) == 0)
-		return len;
+	if ((rc = append_strbuf_str(buff, "wwid rules:\n- blacklist:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->blist_wwid)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "- exceptions:\n");
-	if (snprint_blacklist_group(buff, len, &fwd, &conf->elist_wwid) == 0)
-		return len;
+	if ((rc = append_strbuf_str(buff, "- exceptions:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_group(buff, &conf->elist_wwid)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "device rules:\n"
-					       "- blacklist:\n");
-	if (snprint_blacklist_devgroup(buff, len, &fwd, &conf->blist_device) == 0)
-		return len;
+	if ((rc = append_strbuf_str(buff, "device rules:\n- blacklist:\n")) < 0)
+		return rc;
+	if ((rc = snprint_blacklist_devgroup(buff, &conf->blist_device)) < 0)
+		return rc;
 
-	if ((len - fwd - threshold) <= 0)
-		return len;
-	fwd += snprintf(buff + fwd, len - fwd, "- exceptions:\n");
-	if (snprint_blacklist_devgroup(buff, len, &fwd, &conf->elist_device) == 0)
-		return len;
+	if ((rc = append_strbuf_str(buff, "- exceptions:\n")) < 0)
+	     return rc;
+	if ((rc = snprint_blacklist_devgroup(buff, &conf->elist_device)) < 0)
+		return rc;
 
-	if (fwd > len)
-		return len;
-	return fwd;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-static int snprint_blacklist(const struct config *conf, char *buff, int len)
+static int snprint_blacklist(const struct config *conf, struct strbuf *buff)
 {
-	int i;
+	int i, rc;
 	struct blentry * ble;
 	struct blentry_device * bled;
-	int fwd = 0;
 	struct keyword *rootkw;
-	struct keyword *kw;
+	struct keyword *kw, *pkw;
+	size_t initial_len = get_strbuf_len(buff);
 
 	rootkw = find_keyword(conf->keywords, NULL, "blacklist");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
 
-	fwd += snprintf(buff + fwd, len - fwd, "blacklist {\n");
-	if (fwd >= len)
-		return len;
+	if ((rc = append_strbuf_str(buff, "blacklist {\n")) < 0)
+		return rc;
 
 	vector_foreach_slot (conf->blist_devnode, ble, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "devnode");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ble);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ble)) < 0)
+			return rc;
 	}
 	vector_foreach_slot (conf->blist_wwid, ble, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "wwid");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ble);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ble)) < 0)
+			return rc;
 	}
 	vector_foreach_slot (conf->blist_property, ble, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "property");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ble);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ble)) < 0)
+			return rc;
 	}
 	vector_foreach_slot (conf->blist_protocol, ble, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "protocol");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ble);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ble)) < 0)
+			return rc;
 	}
+
 	rootkw = find_keyword(conf->keywords, rootkw->sub, "device");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
+	kw = find_keyword(conf->keywords, rootkw->sub, "vendor");
+	pkw = find_keyword(conf->keywords, rootkw->sub, "product");
+	assert(kw && pkw);
 
 	vector_foreach_slot (conf->blist_device, bled, i) {
-		fwd += snprintf(buff + fwd, len - fwd, "\tdevice {\n");
-		if (fwd >= len)
-			return len;
-		kw = find_keyword(conf->keywords, rootkw->sub, "vendor");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t\t%k %v\n",
-				       kw, bled);
-		if (fwd >= len)
-			return len;
-		kw = find_keyword(conf->keywords, rootkw->sub, "product");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t\t%k %v\n",
-				       kw, bled);
-		if (fwd >= len)
-			return len;
-		fwd += snprintf(buff + fwd, len - fwd, "\t}\n");
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_keyword(buff, "\tdevice {\n\t\t%k %v\n",
+					  kw, bled)) < 0)
+			return rc;
+		if ((rc = snprint_keyword(buff, "\t\t%k %v\n\t}\n",
+					  pkw, bled)) < 0)
+			return rc;
 	}
-	fwd += snprintf(buff + fwd, len - fwd, "}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+
+	if ((rc = append_strbuf_str(buff, "}\n")) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
 }
 
 static int snprint_blacklist_except(const struct config *conf,
-				    char *buff, int len)
+				    struct strbuf *buff)
 {
-	int i;
+	int i, rc;
 	struct blentry * ele;
 	struct blentry_device * eled;
-	int fwd = 0;
 	struct keyword *rootkw;
-	struct keyword *kw;
+	struct keyword *kw, *pkw;
+	size_t initial_len = get_strbuf_len(buff);
 
 	rootkw = find_keyword(conf->keywords, NULL, "blacklist_exceptions");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
 
-	fwd += snprintf(buff + fwd, len - fwd, "blacklist_exceptions {\n");
-	if (fwd >= len)
-		return len;
+	if ((rc = append_strbuf_str(buff, "blacklist_exceptions {\n")) < 0)
+		return rc;
 
 	vector_foreach_slot (conf->elist_devnode, ele, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "devnode");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ele);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ele)) < 0)
+			return rc;
 	}
 	vector_foreach_slot (conf->elist_wwid, ele, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "wwid");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ele);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ele)) < 0)
+			return rc;
 	}
 	vector_foreach_slot (conf->elist_property, ele, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "property");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ele);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ele)) < 0)
+			return rc;
 	}
 	vector_foreach_slot (conf->elist_protocol, ele, i) {
 		kw = find_keyword(conf->keywords, rootkw->sub, "protocol");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t%k %v\n",
-				       kw, ele);
-		if (fwd >= len)
-			return len;
+		assert(kw);
+		if ((rc = snprint_keyword(buff, "\t%k %v\n", kw, ele)) < 0)
+			return rc;
 	}
+
 	rootkw = find_keyword(conf->keywords, rootkw->sub, "device");
-	if (!rootkw)
-		return 0;
+	assert(rootkw);
+	kw = find_keyword(conf->keywords, rootkw->sub, "vendor");
+	pkw = find_keyword(conf->keywords, rootkw->sub, "product");
+	assert(kw && pkw);
 
 	vector_foreach_slot (conf->elist_device, eled, i) {
-		fwd += snprintf(buff + fwd, len - fwd, "\tdevice {\n");
-		if (fwd >= len)
-			return len;
-		kw = find_keyword(conf->keywords, rootkw->sub, "vendor");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t\t%k %v\n",
-				       kw, eled);
-		if (fwd >= len)
-			return len;
-		kw = find_keyword(conf->keywords, rootkw->sub, "product");
-		if (!kw)
-			return 0;
-		fwd += snprint_keyword(buff + fwd, len - fwd, "\t\t%k %v\n",
-				       kw, eled);
-		if (fwd >= len)
-			return len;
-		fwd += snprintf(buff + fwd, len - fwd, "\t}\n");
-		if (fwd >= len)
-			return len;
+		if ((rc = snprint_keyword(buff, "\tdevice {\n\t\t%k %v\n",
+					  kw, eled)) < 0)
+			return rc;
+		if ((rc = snprint_keyword(buff, "\t\t%k %v\n\t}\n",
+					  pkw, eled)) < 0)
+			return rc;
 	}
-	fwd += snprintf(buff + fwd, len - fwd, "}\n");
-	if (fwd >= len)
-		return len;
-	return fwd;
+
+	if ((rc = append_strbuf_str(buff, "}\n")) < 0)
+		return rc;
+	return get_strbuf_len(buff) - initial_len;
+}
+
+int __snprint_config(const struct config *conf, struct strbuf *buff,
+		     const struct _vector *hwtable, const struct _vector *mpvec)
+{
+	int rc;
+
+	if ((rc = snprint_defaults(conf, buff)) < 0 ||
+	    (rc = snprint_blacklist(conf, buff)) < 0 ||
+	    (rc = snprint_blacklist_except(conf, buff)) < 0 ||
+	    (rc = snprint_hwtable(conf, buff,
+				  hwtable ? hwtable : conf->hwtable)) < 0 ||
+	    (rc = snprint_overrides(conf, buff, conf->overrides)) < 0)
+		return rc;
+
+	if (VECTOR_SIZE(conf->mptable) > 0 ||
+	    (mpvec != NULL && VECTOR_SIZE(mpvec) > 0))
+		if ((rc = snprint_mptable(conf, buff, mpvec)) < 0)
+			return rc;
+
+	return 0;
 }
 
 char *snprint_config(const struct config *conf, int *len,
 		     const struct _vector *hwtable, const struct _vector *mpvec)
 {
+	STRBUF_ON_STACK(buff);
 	char *reply;
-	/* built-in config is >20kB already */
-	unsigned int maxlen = 32768;
+	int rc = __snprint_config(conf, &buff, hwtable, mpvec);
 
-	for (reply = NULL; maxlen <= UINT_MAX/2; maxlen *= 2) {
-		char *c, *tmp = reply;
+	if (rc < 0)
+		return NULL;
 
-		reply = REALLOC(reply, maxlen);
-		if (!reply) {
-			if (tmp)
-				free(tmp);
-			return NULL;
-		}
+	if (len)
+		*len = get_strbuf_len(&buff);
+	reply = steal_strbuf_str(&buff);
 
-		c = reply + snprint_defaults(conf, reply, maxlen);
-		if (c == reply + maxlen)
-			continue;
-
-		c += snprint_blacklist(conf, c, reply + maxlen - c);
-		if (c == reply + maxlen)
-			continue;
-
-		c += snprint_blacklist_except(conf, c, reply + maxlen - c);
-		if (c == reply + maxlen)
-			continue;
-
-		c += snprint_hwtable(conf, c, reply + maxlen - c,
-				     hwtable ? hwtable : conf->hwtable);
-		if (c == reply + maxlen)
-			continue;
-
-		c += snprint_overrides(conf, c, reply + maxlen - c,
-				       conf->overrides);
-		if (c == reply + maxlen)
-			continue;
-
-		if (VECTOR_SIZE(conf->mptable) > 0 ||
-		    (mpvec != NULL && VECTOR_SIZE(mpvec) > 0))
-			c += snprint_mptable(conf, c, reply + maxlen - c,
-					     mpvec);
-
-		if (c < reply + maxlen) {
-			if (len)
-				*len = c - reply;
-			return reply;
-		}
-	}
-
-	free(reply);
-	return NULL;
+	return reply;
 }
 
-int snprint_status(char *buff, int len, const struct vectors *vecs)
+int snprint_status(struct strbuf *buff, const struct vectors *vecs)
 {
-	int fwd = 0;
-	int i;
+	int i, rc;
 	unsigned int count[PATH_MAX_STATE] = {0};
+	int monitored_count = 0;
 	struct path * pp;
+	size_t initial_len = get_strbuf_len(buff);
 
 	vector_foreach_slot (vecs->pathvec, pp, i) {
 		count[pp->state]++;
 	}
-	fwd += snprintf(buff + fwd, len - fwd, "path checker states:\n");
-	for (i=0; i<PATH_MAX_STATE; i++) {
+	if ((rc = append_strbuf_str(buff, "path checker states:\n")) < 0)
+		return rc;
+	for (i = 0; i < PATH_MAX_STATE; i++) {
 		if (!count[i])
 			continue;
-		fwd += snprintf(buff + fwd, len - fwd, "%-20s%u\n",
-				checker_state_name(i), count[i]);
+		if ((rc = print_strbuf(buff, "%-20s%u\n",
+				       checker_state_name(i), count[i])) < 0)
+			return rc;
 	}
-
-	int monitored_count = 0;
 
 	vector_foreach_slot(vecs->pathvec, pp, i)
 		if (pp->fd >= 0)
 			monitored_count++;
-	fwd += snprintf(buff + fwd, len - fwd, "\npaths: %d\nbusy: %s\n",
-			monitored_count, is_uevent_busy()? "True" : "False");
+	if ((rc = print_strbuf(buff, "\npaths: %d\nbusy: %s\n",
+			       monitored_count,
+			       is_uevent_busy()? "True" : "False")) < 0)
+		return rc;
 
-	if (fwd >= len)
-		return len;
-	return fwd;
+	return get_strbuf_len(buff) - initial_len;
 }
 
-int snprint_devices(struct config *conf, char *buff, size_t len,
+int snprint_devices(struct config *conf, struct strbuf *buff,
 		    const struct vectors *vecs)
 {
-	size_t fwd = 0;
 	int r;
 	struct udev_enumerate *enm;
 	struct udev_list_entry *item, *first;
-
 	struct path * pp;
+	size_t initial_len = get_strbuf_len(buff);
 
 	enm = udev_enumerate_new(udev);
 	if (!enm)
 		return 1;
 	udev_enumerate_add_match_subsystem(enm, "block");
 
-	fwd += snprintf(buff + fwd, len - fwd, "available block devices:\n");
+	if ((r = append_strbuf_str(buff, "available block devices:\n")) < 0)
+		goto out;
 	r = udev_enumerate_scan_devices(enm);
 	if (r < 0)
 		goto out;
@@ -2055,12 +2010,16 @@ int snprint_devices(struct config *conf, char *buff, size_t len,
 		struct udev_device *u_dev;
 
 		path = udev_list_entry_get_name(item);
+		if (!path)
+			continue;
 		u_dev = udev_device_new_from_syspath(udev, path);
+		if (!u_dev)
+			continue;
 		devname = udev_device_get_sysname(u_dev);
-
-		fwd += snprintf(buff + fwd, len - fwd, "    %s", devname);
-		if (fwd >= len)
-			break;
+		if (!devname) {
+			udev_device_unref(u_dev);
+			continue;
+		}
 
 		pp = find_path_by_dev(vecs->pathvec, devname);
 		if (!pp) {
@@ -2084,41 +2043,28 @@ int snprint_devices(struct config *conf, char *buff, size_t len,
 		} else
 			status = " devnode whitelisted, monitored";
 
-		fwd += snprintf(buff + fwd, len - fwd, " %s\n", status);
+		r = print_strbuf(buff, "    %s %s\n", devname, status);
 		udev_device_unref(u_dev);
-		if (fwd >= len)
+		if (r < 0)
 			break;
 	}
 out:
 	udev_enumerate_unref(enm);
+	if (r < 0)
+		return r;
 
-	if (fwd >= len)
-		return len;
-	return fwd;
+	return get_strbuf_len(buff) - initial_len;
 }
 
 /*
  * stdout printing helpers
  */
-void print_path(struct path *pp, char *style)
-{
-	char line[MAX_LINE_LEN];
-
-	memset(&line[0], 0, MAX_LINE_LEN);
-	snprint_path(&line[0], MAX_LINE_LEN, style, pp, 1);
-	printf("%s", line);
-}
-
-void print_all_paths(vector pathvec, int banner)
-{
-	print_all_paths_custo(pathvec, banner, PRINT_PATH_LONG);
-}
-
-void print_all_paths_custo(vector pathvec, int banner, char *fmt)
+static void print_all_paths_custo(vector pathvec, int banner, const char *fmt)
 {
 	int i;
 	struct path * pp;
-	char line[MAX_LINE_LEN];
+	STRBUF_ON_STACK(line);
+	fieldwidth_t *width __attribute__((cleanup(cleanup_ucharp))) = NULL;
 
 	if (!VECTOR_SIZE(pathvec)) {
 		if (banner)
@@ -2126,13 +2072,22 @@ void print_all_paths_custo(vector pathvec, int banner, char *fmt)
 		return;
 	}
 
-	if (banner)
-		fprintf(stdout, "===== paths list =====\n");
+	if ((width = alloc_path_layout()) == NULL)
+		return;
+	get_path_layout(pathvec, 1, width);
 
-	get_path_layout(pathvec, 1);
-	snprint_path_header(line, MAX_LINE_LEN, fmt);
-	fprintf(stdout, "%s", line);
+	if (banner)
+		append_strbuf_str(&line, "===== paths list =====\n");
+
+	snprint_path_header(&line, fmt, width);
 
 	vector_foreach_slot (pathvec, pp, i)
-		print_path(pp, fmt);
+		snprint_path(&line, fmt, pp, width);
+
+	printf("%s", get_strbuf_str(&line));
+}
+
+void print_all_paths(vector pathvec, int banner)
+{
+	print_all_paths_custo(pathvec, banner, PRINT_PATH_LONG);
 }

@@ -1,1 +1,5 @@
-/sbin/kpartx
+udeb/usr/lib/udev/kpartx_id usr/lib/udev/
+udeb/usr/lib/udev/rules.d/56-dm-parts.rules usr/lib/udev/rules.d/
+udeb/usr/lib/udev/rules.d/60-kpartx.rules usr/lib/udev/rules.d/
+udeb/usr/lib/udev/rules.d/68-del-part-nodes.rules usr/lib/udev/rules.d/
+udeb/usr/sbin/kpartx usr/sbin/

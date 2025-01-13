@@ -15,11 +15,16 @@ localhost="127.0.0.1"
 portal="${localhost}:3260"
 maxpaths=4
 backfn="backingfile"
-expectwwid="360000000000000000e00000000010001"
-testdisk="/dev/disk/by-id/scsi-${expectwwid}"
+expectwwid="60000000000000000e00000000010001"
+testdisk="/dev/disk/by-id/wwn-0x${expectwwid}"
 bglog="$AUTOPKGTEST_ARTIFACTS/test-background.log"
 fioprep="$AUTOPKGTEST_ARTIFACTS/path-change-prep.fio"
 fiovrfy="$AUTOPKGTEST_ARTIFACTS/path-change-check.fio"
+
+# Debian uses upstreams default for find_multipaths.
+# Provide a WWID entry, so the devices will be managed by multipath(d).
+mkdir -p /etc/multipath
+echo "/360000000000000000e00000000010001/" > /etc/multipath/wwids
 
 # Restart tgtd to make sure modules are all loaded
 service tgt restart || echo "Failed to restart tgt" >&2
@@ -48,6 +53,7 @@ do
 done
 
 udevadm settle
+sleep 5         # sleep a bit to allow device to be created.
 
 # status summary
 echo "Status after initial setup"
@@ -57,6 +63,13 @@ iscsiadm --mode session -P 1
 lsscsi -liv
 multipath -v3 -ll
 dmsetup table
+grep . /etc/multipath/*
+systemctl status multipathd.service
+systemctl status multipathd.socket
+ls -la /dev/mapper/
+
+echo "journal"
+journalctl -b
 
 echo "Test WWN should now point to DM"
 readlink "${testdisk}" | grep dm

@@ -23,7 +23,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <libudev.h>
 #include <pthread.h>
 #include <limits.h>
 #include <dirent.h>
@@ -37,6 +36,7 @@
 #include "debug.h"
 #include "structs.h"
 #include "sysfs.h"
+#include "strbuf.h"
 
 static const char nvme_vendor[] = "NVMe";
 static const char N_A[] = "n/a";
@@ -138,7 +138,7 @@ static void rstrip(char *str)
 }
 
 static int snprint_nvme_map(const struct gen_multipath *gmp,
-			    char *buff, int len, char wildcard)
+			    struct strbuf *buff, char wildcard)
 {
 	const struct nvme_map *nvm = const_gen_mp_to_nvme(gmp);
 	char fld[NAME_LEN];
@@ -146,26 +146,26 @@ static int snprint_nvme_map(const struct gen_multipath *gmp,
 
 	switch (wildcard) {
 	case 'd':
-		return snprintf(buff, len, "%s",
+		return append_strbuf_str(buff,
 				udev_device_get_sysname(nvm->udev));
 	case 'n':
-		return snprintf(buff, len, "%s:nsid.%s",
+		return print_strbuf(buff, "%s:nsid.%s",
 				udev_device_get_sysattr_value(nvm->subsys,
 							      "subsysnqn"),
 				udev_device_get_sysattr_value(nvm->udev,
 							      "nsid"));
 	case 'w':
-		return snprintf(buff, len, "%s",
+		return append_strbuf_str(buff,
 				udev_device_get_sysattr_value(nvm->udev,
 							      "wwid"));
 	case 'N':
-		return snprintf(buff, len, "%u", nvm->nr_live);
+		return print_strbuf(buff, "%u", nvm->nr_live);
 	case 'S':
-		return snprintf(buff, len, "%s",
+		return append_strbuf_str(buff,
 				udev_device_get_sysattr_value(nvm->udev,
 							      "size"));
 	case 'v':
-		return snprintf(buff, len, "%s", nvme_vendor);
+		return append_strbuf_str(buff, nvme_vendor);
 	case 's':
 	case 'p':
 		snprintf(fld, sizeof(fld), "%s",
@@ -173,30 +173,32 @@ static int snprint_nvme_map(const struct gen_multipath *gmp,
 						      "model"));
 		rstrip(fld);
 		if (wildcard == 'p')
-			return snprintf(buff, len, "%s", fld);
-		return snprintf(buff, len, "%s,%s,%s", nvme_vendor, fld,
+			return append_strbuf_str(buff, fld);
+		return print_strbuf(buff, "%s,%s,%s", nvme_vendor, fld,
 				udev_device_get_sysattr_value(nvm->subsys,
 							      "firmware_rev"));
 	case 'e':
-		return snprintf(buff, len, "%s",
+		return append_strbuf_str(buff,
 				udev_device_get_sysattr_value(nvm->subsys,
 							      "firmware_rev"));
 	case 'r':
 		val = udev_device_get_sysattr_value(nvm->udev, "ro");
-		if (val[0] == 1)
-			return snprintf(buff, len, "%s", "ro");
+		if (!val)
+			return append_strbuf_str(buff, "undef");
+		else if (val[0] == 1)
+			return append_strbuf_str(buff, "ro");
 		else
-			return snprintf(buff, len, "%s", "rw");
+			return append_strbuf_str(buff, "rw");
 	case 'G':
-		return snprintf(buff, len, "%s", THIS);
+		return append_strbuf_str(buff, THIS);
 	case 'h':
 		if (nvm->ana_supported == YNU_YES)
-			return snprintf(buff, len, "ANA");
+			return append_strbuf_str(buff, "ANA");
 	default:
 		break;
 	}
 
-	return snprintf(buff, len, N_A);
+	return append_strbuf_str(buff, N_A);
 }
 
 static const struct _vector*
@@ -214,7 +216,7 @@ nvme_pg_rel_paths(__attribute__((unused)) const struct gen_pathgroup *gpg,
 	/* empty */
 }
 
-static int snprint_hcil(const struct nvme_path *np, char *buf, int len)
+static int snprint_hcil(const struct nvme_path *np, struct strbuf *buf)
 {
 	unsigned int nvmeid, ctlid, nsid;
 	int rc;
@@ -223,14 +225,13 @@ static int snprint_hcil(const struct nvme_path *np, char *buf, int len)
 	rc = sscanf(sysname, "nvme%uc%un%u", &nvmeid, &ctlid, &nsid);
 	if (rc != 3) {
 		condlog(1, "%s: failed to scan %s", __func__, sysname);
-		rc = snprintf(buf, len, "(ERR:%s)", sysname);
+		return print_strbuf(buf, "(ERR:%s)", sysname);
 	} else
-		rc = snprintf(buf, len, "%u:%u:%u", nvmeid, ctlid, nsid);
-	return (rc < len ? rc : len);
+		return print_strbuf(buf, "%u:%u:%u", nvmeid, ctlid, nsid);
 }
 
 static int snprint_nvme_path(const struct gen_path *gp,
-			     char *buff, int len, char wildcard)
+			     struct strbuf *buff, char wildcard)
 {
 	const struct nvme_path *np = const_gen_path_to_nvme(gp);
 	dev_t devt;
@@ -239,37 +240,37 @@ static int snprint_nvme_path(const struct gen_path *gp,
 
 	switch (wildcard) {
 	case 'w':
-		return snprintf(buff, len, "%s",
-				udev_device_get_sysattr_value(np->udev,
-							      "wwid"));
+		return print_strbuf(buff, "%s",
+				    udev_device_get_sysattr_value(np->udev,
+								  "wwid"));
 	case 'd':
-		return snprintf(buff, len, "%s",
-				udev_device_get_sysname(np->udev));
+		return print_strbuf(buff, "%s",
+				    udev_device_get_sysname(np->udev));
 	case 'i':
-		return snprint_hcil(np, buff, len);
+		return snprint_hcil(np, buff);
 	case 'D':
 		devt = udev_device_get_devnum(np->udev);
-		return snprintf(buff, len, "%u:%u", major(devt), minor(devt));
+		return print_strbuf(buff, "%u:%u", major(devt), minor(devt));
 	case 'o':
 		if (sysfs_attr_get_value(np->ctl, "state",
 					 fld, sizeof(fld)) > 0)
-			return snprintf(buff, len, "%s", fld);
+			return append_strbuf_str(buff, fld);
 		break;
 	case 'T':
 		if (sysfs_attr_get_value(np->udev, "ana_state", fld,
 					 sizeof(fld)) > 0)
-			return snprintf(buff, len, "%s", fld);
+			return append_strbuf_str(buff, fld);
 		break;
 	case 'p':
 		if (sysfs_attr_get_value(np->udev, "ana_state", fld,
 					 sizeof(fld)) > 0) {
 			rstrip(fld);
 			if (!strcmp(fld, "optimized"))
-				return snprintf(buff, len, "%d", 50);
+				return print_strbuf(buff, "%d", 50);
 			else if (!strcmp(fld, "non-optimized"))
-				return snprintf(buff, len, "%d", 10);
+				return print_strbuf(buff, "%d", 10);
 			else
-				return snprintf(buff, len, "%d", 0);
+				return print_strbuf(buff, "%d", 0);
 		}
 		break;
 	case 's':
@@ -277,46 +278,45 @@ static int snprint_nvme_path(const struct gen_path *gp,
 			 udev_device_get_sysattr_value(np->ctl,
 						      "model"));
 		rstrip(fld);
-		return snprintf(buff, len, "%s,%s,%s", nvme_vendor, fld,
-				udev_device_get_sysattr_value(np->ctl,
+		return print_strbuf(buff, "%s,%s,%s", nvme_vendor, fld,
+				    udev_device_get_sysattr_value(np->ctl,
 							      "firmware_rev"));
 	case 'S':
-		return snprintf(buff, len, "%s",
+		return append_strbuf_str(buff,
 			udev_device_get_sysattr_value(np->udev,
 						      "size"));
 	case 'z':
-		return snprintf(buff, len, "%s",
+		return append_strbuf_str(buff,
 				udev_device_get_sysattr_value(np->ctl,
 							      "serial"));
 	case 'm':
-		return snprintf(buff, len, "%s",
+		return append_strbuf_str(buff,
 				udev_device_get_sysname(np->map->udev));
 	case 'N':
 	case 'R':
-		return snprintf(buff, len, "%s:%s",
+		return print_strbuf(buff, "%s:%s",
 			udev_device_get_sysattr_value(np->ctl,
 						      "transport"),
 			udev_device_get_sysattr_value(np->ctl,
 						      "address"));
 	case 'G':
-		return snprintf(buff, len, "[%s]", THIS);
+		return print_strbuf(buff, "[%s]", THIS);
 	case 'a':
 		pci = udev_device_get_parent_with_subsystem_devtype(np->ctl,
 								    "pci",
 								    NULL);
 		if (pci != NULL)
-			return snprintf(buff, len, "PCI:%s",
-					udev_device_get_sysname(pci));
+			return print_strbuf(buff, "PCI:%s",
+					    udev_device_get_sysname(pci));
 		/* fall through */
 	default:
 		break;
 	}
-	return snprintf(buff, len, "%s", N_A);
-	return 0;
+	return append_strbuf_str(buff, N_A);
 }
 
 static int snprint_nvme_pg(const struct gen_pathgroup *gmp,
-			   char *buff, int len, char wildcard)
+			   struct strbuf *buff, char wildcard)
 {
 	const struct nvme_pathgroup *pg = const_gen_pg_to_nvme(gmp);
 	const struct nvme_path *path = nvme_pg_to_path(pg);
@@ -324,22 +324,19 @@ static int snprint_nvme_pg(const struct gen_pathgroup *gmp,
 	switch (wildcard) {
 	case 't':
 		return snprint_nvme_path(nvme_path_to_gen(path),
-					 buff, len, 'T');
+					 buff, 'T');
 	case 'p':
 		return snprint_nvme_path(nvme_path_to_gen(path),
-					 buff, len, 'p');
+					 buff, 'p');
 	default:
-		return snprintf(buff, len, N_A);
+		return append_strbuf_str(buff, N_A);
 	}
 }
 
 static int nvme_style(__attribute__((unused)) const struct gen_multipath* gm,
-		      char *buf, int len,
-		      __attribute__((unused)) int verbosity)
+		      struct strbuf *buf, __attribute__((unused)) int verbosity)
 {
-	int n = snprintf(buf, len, "%%w [%%G]:%%d %%s");
-
-	return (n < len ? n : len - 1);
+	return append_strbuf_str(buf, "%w [%G]:%d %s");
 }
 
 static const struct gen_multipath_ops nvme_map_ops = {
@@ -413,7 +410,7 @@ void cleanup(struct context *ctx)
 	lock(ctx);
 	/*
 	 * Locking is not strictly necessary here, locking in foreign.c
-	 * makes sure that no other code is called with this ctx any more.
+	 * makes sure that no other code is called with this ctx anymore.
 	 * But this should make static checkers feel better.
 	 */
 	pthread_cleanup_push(unlock, ctx);
@@ -534,14 +531,18 @@ static int _dirent_controller(const struct dirent *di)
 
 /* Find the block device for a given nvme controller */
 struct udev_device *get_ctrl_blkdev(const struct context *ctx,
-				    struct udev_device *ctrl)
+				    struct udev_device *ctrl, const char *ctrl_name)
 {
+	int ctrl_num, ns_num; 
 	struct udev_list_entry *item;
 	struct udev_device *blkdev = NULL;
 	struct udev_enumerate *enm = udev_enumerate_new(ctx->udev);
 	const char *devtype;
 
-	if (enm == NULL)
+	if (enm == NULL || ctrl_name == NULL)
+		return NULL;
+
+	if (sscanf(ctrl_name, "nvme%dn%d", &ctrl_num, &ns_num) != 2)
 		return NULL;
 
 	pthread_cleanup_push(_udev_enumerate_unref, enm);
@@ -559,6 +560,8 @@ struct udev_device *get_ctrl_blkdev(const struct context *ctx,
 	     item != NULL;
 	     item = udev_list_entry_get_next(item)) {
 		struct udev_device *tmp;
+		const char *name = NULL ;
+		int m, n, l;
 
 		tmp = udev_device_new_from_syspath(ctx->udev,
 					   udev_list_entry_get_name(item));
@@ -566,11 +569,19 @@ struct udev_device *get_ctrl_blkdev(const struct context *ctx,
 			continue;
 
 		devtype = udev_device_get_devtype(tmp);
-		if (devtype && !strcmp(devtype, "disk")) {
+		if (devtype == NULL || strcmp(devtype, "disk")) {
+			udev_device_unref(tmp);
+			continue;
+		}
+
+		name = udev_device_get_sysname(tmp);
+		if (name != NULL &&
+		    sscanf(name, "nvme%dc%dn%d", &m, &n, &l) == 3 &&
+		    l == ns_num) {
 			blkdev = tmp;
 			break;
-		} else
-			udev_device_unref(tmp);
+		}
+		udev_device_unref(tmp);
 	}
 
 	if (blkdev == NULL)
@@ -588,7 +599,7 @@ static void test_ana_support(struct nvme_map *map, struct udev_device *ctl)
 {
 	const char *dev_t;
 	char sys_path[64];
-	long fd;
+	int fd = -1;
 	int rc;
 
 	if (map->ana_supported != YNU_UNDEF)
@@ -604,7 +615,7 @@ static void test_ana_support(struct nvme_map *map, struct udev_device *ctl)
 		return;
 	}
 
-	pthread_cleanup_push(close_fd, (void *)fd);
+	pthread_cleanup_push(cleanup_fd_ptr, &fd);
 	rc = nvme_id_ctrl_ana(fd, NULL);
 	if (rc < 0)
 		condlog(2, "%s: error in nvme_id_ctrl: %s", __func__,
@@ -683,7 +694,7 @@ static void _find_controllers(struct context *ctx, struct nvme_map *map)
 		}
 
 		pthread_cleanup_push(_udev_device_unref, ctrl);
-		udev = get_ctrl_blkdev(ctx, ctrl);
+		udev = get_ctrl_blkdev(ctx, ctrl, udev_device_get_sysname(map->udev));
 		/*
 		 * We give up the reference to the nvme device here and get
 		 * it back from the child below.

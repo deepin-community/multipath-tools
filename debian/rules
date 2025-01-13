@@ -1,146 +1,75 @@
 #!/usr/bin/make -f
 
-INITRAMFS=$(CURDIR)/debian/multipath-tools-boot/usr/share/initramfs-tools/
-
 # For Hardening
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 DPKG_EXPORT_BUILDFLAGS = 1
 include /usr/share/dpkg/buildflags.mk
 include /usr/share/dpkg/pkg-info.mk
+
+# Reproducible timestamp
 export KBUILD_BUILD_TIMESTAMP = "@$(SOURCE_DATE_EPOCH)"
-#
 
-# Uncomment this to turn on verbose mode.
-#export DH_VERBOSE=1
+# Disable libdmmp, no known users exist
+export ENABLE_LIBDMMP=0
 
-build: build-arch build-indep
+TREENAMES = build-deb build-udeb
 
-build-arch: build-multipath-udeb-stamp build-stamp
-build-indep:
-	# Nothing to do here.
-	touch $@
+%:
+	dh $@
 
-build-stamp: clean-tree
-	dh_testdir
-	
-	[ ! -f kpartx/del-part-nodes.rules ] || cp kpartx/del-part-nodes.rules debian/kpartx.del-part-nodes.udev
-	[ ! -f kpartx/dm-parts.rules ] || cp kpartx/dm-parts.rules debian/kpartx.dm-parts.udev
-	[ ! -f kpartx/kpartx.rules ] || cp kpartx/kpartx.rules debian/kpartx.udev
-	[ ! -f multipath/multipath.rules ] || cp multipath/multipath.rules debian/multipath.udev
-	[ ! -f multipath/11-dm-mpath.rules ] || cp multipath/11-dm-mpath.rules debian/dm-mpath.udev
+execute_before_dh_clean:
+	for treename in $(TREENAMES); do \
+		rm -rf debian/$$treename ;\
+	done
+	# Force recreation of docs re. reproducibility
+	rm -fv libdmmp/docs/man/dmmp_strerror.3
 
-	dh_auto_build --parallel -- $(OPTFLAGS) LIB=/lib SYSTEMDPATH=/lib USE_SYSTEMD=1
-
-	touch $@
-
-# multipath-udeb: build separately; don't reference dynamic libgcc at runtime (#779579)
-build-multipath-udeb-stamp:
-	dh_testdir
-
-	DEB_CFLAGS_MAINT_APPEND="-static-libgcc" dh_auto_build --parallel -- $(OPTFLAGS) LIB=/lib USE_SYSTEMD=0
-	
-	# store files for install target
-	mkdir -p $(CURDIR)/debian/tmp-multipath-udeb/sbin
-	$(MAKE) -j1 install DESTDIR=$(CURDIR)/debian/tmp-multipath-udeb LIB=/lib USE_SYSTEMD=0
-
-	touch $@
-
-clean-tree:
-	$(MAKE) clean
-
-clean: clean-tree
-	dh_testdir
-	rm -f build-stamp build-multipath-udeb-stamp
-	dh_prep
-	debconf-updatepo
-	rm -rf debian/*.debhelper.log
-	rm -rf debian/tmp-multipath-udeb
-	dh_clean
-
-install-indep:
-	dh_testdir
-	dh_testroot
-	dh_prep
-	dh_installdirs
-
-	# initramfs stuff:
-	install -D -m 755 debian/initramfs/hooks $(INITRAMFS)/hooks/multipath
-	install -D -m 755 debian/initramfs/local-top \
-		$(INITRAMFS)/scripts/local-top/multipath
-	install -D -m 755 debian/initramfs/init-top \
-		$(INITRAMFS)/scripts/init-top/multipath
-
-	# reportbug:
-	for pkg in "multipath-tools" "multipath-tools-boot"; do \
-	    install -D -m 755 debian/reportbug/script debian/$${pkg}/usr/share/bug/$${pkg}/script; \
+execute_before_dh_auto_configure:
+	# no out of tree build support, prepare two source trees
+	for treename in $(TREENAMES); do \
+		mkdir debian/$$treename ;\
+		cp -r -t debian/$$treename $$(find . -mindepth 1 -maxdepth 1 \! -name debian \! -name .git) ;\
 	done
 
-	# lintian override
-	install -D -m 644 debian/multipath-tools-boot.lintian-overrides \
-	    debian/multipath-tools-boot/usr/share/lintian/overrides/multipath-tools-boot
+override_dh_auto_configure:
 
+override_dh_auto_build:
+	dh_auto_build --sourcedirectory=debian/build-deb
+	# multipath-udeb: build separately; don't reference dynamic libgcc at runtime (#779579); disable systemd
+	dh_auto_build --sourcedirectory=debian/build-udeb -- \
+		SYSTEMD= EXTRACFLAGS="-static-libgcc"
 
-install: install-indep
-	dh_testdir
-	dh_testroot
-	dh_installdirs
+override_dh_auto_test:
 
-	mkdir -p $(CURDIR)/debian/tmp/sbin
-	$(MAKE) -j1 install DESTDIR=$(CURDIR)/debian/tmp LIB=/lib SYSTEMDPATH=/lib USE_SYSTEMD=1
-	install -m 755 debian/dmsetup_env $(CURDIR)/debian/tmp/lib/udev/
-	dh_install -X.rules --fail-missing -Nmultipath-udeb --sourcedir=$(CURDIR)/debian/tmp
-	dh_install -Xkpartx_id -X.rules -X.service -X.socket --fail-missing -pmultipath-udeb --sourcedir=$(CURDIR)/debian/tmp-multipath-udeb
+override_dh_auto_install:
+	dh_auto_install --sourcedirectory=debian/build-deb -- DESTDIR=$(CURDIR)/debian/tmp/deb
+	dh_auto_install --sourcedirectory=debian/build-udeb -- DESTDIR=$(CURDIR)/debian/tmp/udeb
 
-binary-indep: build-indep install-indep
-	dh_testdir -i
-	dh_testroot -i
-	dh_installdirs -i
-	dh_installchangelogs -i
-	dh_installdocs -i
-	dh_installexamples -i
-	dh_installinit -pmultipath-tools-boot --name=multipath-tools-boot --no-start -- start 21 S .
-	dh_installinit -pmultipath-tools-boot
-	dh_installdebconf -pmultipath-tools-boot
-	dh_installman -i
-	dh_compress -i
-	dh_fixperms -i
-	dh_installdeb -i
-	dh_gencontrol -i
-	dh_md5sums -i
-	dh_builddeb -i
+	# udebs dont get manpages
+	rm -rf $(CURDIR)/debian/tmp/udeb/usr/share/man
 
-# Build architecture-dependent files here.
-binary-arch: build install
-	dh_testdir -a
-	dh_testroot -a
-	dh_installchangelogs -a
-	dh_installdocs -a
-	dh_installexamples -a
-	dh_lintian -a
-	dh_systemd_enable -pmultipath-tools multipathd.service
-	dh_installinit -pmultipath-tools
-	dh_installudev -pkpartx
-	dh_installudev -pkpartx --name=dm-parts --priority=56
-	dh_installudev -pkpartx --name=del-part-nodes --priority=68
-	dh_installudev -pmultipath-tools --name=multipath
-	dh_installudev -pmultipath-tools --name=dm-mpath --priority=56
-	dh_link -a lib/systemd/system/multipathd.service \
-		lib/systemd/system/multipath-tools.service
-	dh_systemd_start -pmultipath-tools multipathd.service
-	dh_installman -a
+	# Delete development files to prevent accidential linking of libraries with unlikely-to-be-stable ABI.
+	rm \
+		$(CURDIR)/debian/tmp/deb/usr/include/mpath_cmd.h \
+		$(CURDIR)/debian/tmp/deb/usr/include/mpath_persist.h \
+		$(CURDIR)/debian/tmp/udeb/usr/include/mpath_cmd.h \
+		$(CURDIR)/debian/tmp/udeb/usr/include/mpath_persist.h \
+		$(CURDIR)/debian/tmp/deb/usr/share/man/man3/mpath_persistent* \
+		$(CURDIR)/debian/tmp/deb/usr/lib/libm*.so \
+		$(CURDIR)/debian/tmp/udeb/usr/lib/libm*.so
+
+execute_after_dh_install:
+	if strings debian/multipath-udeb/usr/lib/libmultipath.so.0 | grep libsystemd.so ; then \
+		echo ERROR: udeb linked to libsystemd ;\
+		exit 1 ;\
+	fi
+
+override_dh_bugfiles:
+	dh_bugfiles -A -pmultipath-tools -pmultipath-tools-boot
+
+override_dh_installsystemd:
+	dh_installsystemd -pmultipath-tools multipathd.service \
+		--no-stop-on-upgrade
+
+override_dh_makeshlibs:
 	dh_makeshlibs -a --add-udeb=multipath-udeb
-	dh_link -a
-	dh_strip -a
-	dh_compress -a
-	dh_fixperms -a
-	dh_installdeb -a
-	dh_shlibdeps -a
-	dh_gencontrol -a
-	dh_md5sums -a
-	dh_builddeb -a
-
-binary:	binary-indep binary-arch
-.PHONY: binary binary-arch binary-indep unpack configure build clean
-
-# We build the same tree twice, this cannot happen in parallel.
-.NOTPARALLEL:

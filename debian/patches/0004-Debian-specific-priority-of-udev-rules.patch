@@ -1,0 +1,47 @@
+From: Chris Hofstaedtler <zeha@debian.org>
+Date: Mon, 1 Jan 2024 15:35:18 +0100
+Subject: Debian-specific priority of udev rules
+
+11-dm-*.rules supposedly should apply after dmsetup rules, but in Debian these
+have priority 55 instead of 11.
+Also for historic reasons, multipath.rules and kpartx.rules have a slightly
+higher prio in Debian than upstream.
+
+Forwarded: no
+Origin: vendor
+---
+ kpartx/Makefile    | 4 ++--
+ multipath/Makefile | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/kpartx/Makefile b/kpartx/Makefile
+index 7720a74..2d01812 100644
+--- a/kpartx/Makefile
++++ b/kpartx/Makefile
+@@ -25,8 +25,8 @@ install: $(EXEC) $(EXEC).8
+ 	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(libudevdir)
+ 	$(Q)$(INSTALL_PROGRAM) -m 755 kpartx_id $(DESTDIR)$(libudevdir)
+ 	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(libudevdir)/rules.d
+-	$(Q)$(INSTALL_PROGRAM) -m 644 dm-parts.rules $(DESTDIR)$(libudevdir)/rules.d/11-dm-parts.rules
+-	$(Q)$(INSTALL_PROGRAM) -m 644 kpartx.rules $(DESTDIR)$(libudevdir)/rules.d/66-kpartx.rules
++	$(Q)$(INSTALL_PROGRAM) -m 644 dm-parts.rules $(DESTDIR)$(libudevdir)/rules.d/56-dm-parts.rules
++	$(Q)$(INSTALL_PROGRAM) -m 644 kpartx.rules $(DESTDIR)$(libudevdir)/rules.d/60-kpartx.rules
+ 	$(Q)$(INSTALL_PROGRAM) -m 644 del-part-nodes.rules $(DESTDIR)$(libudevdir)/rules.d/68-del-part-nodes.rules
+ 	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(mandir)/man8
+ 	$(Q)$(INSTALL_PROGRAM) -m 644 $(EXEC).8 $(DESTDIR)$(mandir)/man8
+diff --git a/multipath/Makefile b/multipath/Makefile
+index 67fb5e6..3809553 100644
+--- a/multipath/Makefile
++++ b/multipath/Makefile
+@@ -25,9 +25,9 @@ install:
+ 	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(bindir)
+ 	$(Q)$(INSTALL_PROGRAM) -m 755 $(EXEC) $(DESTDIR)$(bindir)/
+ 	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(udevrulesdir)
+-	$(Q)$(INSTALL_PROGRAM) -m 644 11-dm-mpath.rules $(DESTDIR)$(udevrulesdir)
++	$(Q)$(INSTALL_PROGRAM) -m 644 11-dm-mpath.rules $(DESTDIR)$(udevrulesdir)/56-dm-mpath.rules
+ 	$(Q)$(INSTALL_PROGRAM) -m 644 99-z-dm-mpath-late.rules $(DESTDIR)$(udevrulesdir)
+-	$(Q)$(INSTALL_PROGRAM) -m 644 multipath.rules $(DESTDIR)$(udevrulesdir)/56-multipath.rules
++	$(Q)$(INSTALL_PROGRAM) -m 644 multipath.rules $(DESTDIR)$(udevrulesdir)/60-multipath.rules
+ 	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(tmpfilesdir)
+ 	$(Q)$(INSTALL_PROGRAM) -m 644 tmpfiles.conf $(DESTDIR)$(tmpfilesdir)/multipath.conf
+ 	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(mandir)/man8

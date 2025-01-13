@@ -111,7 +111,7 @@ static void test_uid_attrs(void **state)
 static void test_wwid(void **state)
 {
 	struct uevent *uev = *state;
-	uevent_get_wwid(uev);
+	uevent_get_wwid(uev, &conf);
 
 	assert_string_equal(uev->wwid, WWID);
 }
@@ -194,7 +194,7 @@ static void test_dm_name_good(void **state)
 	char *name = uevent_get_dm_name(uev);
 
 	assert_string_equal(name, DM_NAME);
-	FREE(name);
+	free(name);
 }
 
 static void test_dm_name_bad_0(void **state)
@@ -205,7 +205,7 @@ static void test_dm_name_bad_0(void **state)
 	uev->envp[3] = "DM_NAME" DM_NAME;
 	name = uevent_get_dm_name(uev);
 	assert_ptr_equal(name, NULL);
-	FREE(name);
+	free(name);
 }
 
 static void test_dm_name_bad_1(void **state)
@@ -216,7 +216,7 @@ static void test_dm_name_bad_1(void **state)
 	uev->envp[3] = "DM_NAMES=" DM_NAME;
 	name = uevent_get_dm_name(uev);
 	assert_ptr_equal(name, NULL);
-	FREE(name);
+	free(name);
 }
 
 static void test_dm_name_good_1(void **state)
@@ -228,7 +228,7 @@ static void test_dm_name_good_1(void **state)
 	uev->envp[2] = "DM_NAME=" DM_NAME;
 	name = uevent_get_dm_name(uev);
 	assert_string_equal(name, DM_NAME);
-	FREE(name);
+	free(name);
 }
 
 static void test_dm_uuid_false_0(void **state)
@@ -322,6 +322,7 @@ int main(void)
 {
 	int ret = 0;
 
+	init_test_verbosity(-1);
 	ret += test_uevent_get_XXX();
 	return ret;
 }

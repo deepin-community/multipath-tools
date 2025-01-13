@@ -16,6 +16,7 @@
  *
  */
 
+#include <pthread.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
@@ -28,7 +29,7 @@
 #include <fcntl.h>
 #include "structs.h"
 #include "structs_vec.h"
-
+#include "wrap64.h"
 #include "globals.c"
 /* I have to do this to get at the static variables */
 #include "../multipathd/dmevents.c"
@@ -179,6 +180,8 @@ struct dm_names *build_dm_names(void)
 	return names;
 }
 
+static bool setup_done;
+
 static int setup(void **state)
 {
 	if (dmevent_poll_supported()) {
@@ -186,6 +189,7 @@ static int setup(void **state)
 		*state = &data;
 	} else
 		*state = NULL;
+	setup_done = true;
 	return 0;
 }
 
@@ -203,7 +207,7 @@ static int teardown(void **state)
 	return 0;
 }
 
-int __wrap_open(const char *pathname, int flags)
+int WRAP_OPEN(const char *pathname, int flags)
 {
 	assert_ptr_equal(pathname, "/dev/mapper/control");
 	assert_int_equal(flags, O_RDWR);
@@ -262,14 +266,20 @@ struct dm_task *__wrap_libmp_dm_task_create(int task)
 	return mock_type(struct dm_task *);
 }
 
+int __real_dm_task_no_open_count(struct dm_task *dmt);
 int __wrap_dm_task_no_open_count(struct dm_task *dmt)
 {
+	if (!setup_done)
+		return __real_dm_task_no_open_count(dmt);
 	assert_ptr_equal((struct test_data *)dmt, &data);
 	return mock_type(int);
 }
 
+int __real_dm_task_run(struct dm_task *dmt);
 int __wrap_dm_task_run(struct dm_task *dmt)
 {
+	if (!setup_done)
+		return __real_dm_task_run(dmt);
 	assert_ptr_equal((struct test_data *)dmt, &data);
 	return mock_type(int);
 }
@@ -291,8 +301,11 @@ struct dm_names * __wrap_dm_task_get_names(struct dm_task *dmt)
 	return data.names;
 }
 
+void __real_dm_task_destroy(struct dm_task *dmt);
 void __wrap_dm_task_destroy(struct dm_task *dmt)
 {
+	if (!setup_done)
+		return __real_dm_task_destroy(dmt);
 	assert_ptr_equal((struct test_data *)dmt, &data);
 
 	if (data.names) {
@@ -310,24 +323,21 @@ int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 	return mock_type(int);
 }
 
-void __wrap_remove_map_by_alias(const char *alias, struct vectors * vecs,
-				int purge_vec)
+void __wrap_remove_map_by_alias(const char *alias, struct vectors * vecs)
 {
 	check_expected(alias);
 	assert_ptr_equal(vecs, waiter->vecs);
-	assert_int_equal(purge_vec, 1);
 }
 
 /* pretend update the pretend dm devices. If fail is set, it
  * simulates having the dm device removed. Otherwise it just sets
  * update_nr to record when the update happened */
-int __wrap_update_multipath(struct vectors *vecs, char *mapname, int reset)
+int __wrap_update_multipath(struct vectors *vecs, char *mapname)
 {
 	int fail;
 
 	check_expected(mapname);
 	assert_ptr_equal(vecs, waiter->vecs);
-	assert_int_equal(reset, 1);
 	fail = mock_type(int);
 	if (fail) {
 		assert_int_equal(remove_dm_device_event(mapname), 0);
@@ -379,7 +389,7 @@ static void test_init_waiter_bad1(void **state)
 	struct test_data *datap = (struct test_data *)(*state);
 	if (datap == NULL)
 		skip();
-	will_return(__wrap_open, -1);
+	wrap_will_return(WRAP_OPEN, -1);
 	assert_int_equal(init_dmevent_waiter(&datap->vecs), -1);
 	assert_ptr_equal(waiter, NULL);
 }
@@ -390,7 +400,7 @@ static void test_init_waiter_good0(void **state)
 	struct test_data *datap = (struct test_data *)(*state);
 	if (datap == NULL)
 		skip();
-	will_return(__wrap_open, 2);
+	wrap_will_return(WRAP_OPEN, 2);
 	assert_int_equal(init_dmevent_waiter(&datap->vecs), 0);
 	assert_ptr_not_equal(waiter, NULL);
 }
@@ -912,6 +922,7 @@ int main(void)
 {
 	int ret = 0;
 
+	init_test_verbosity(-1);
 	ret += test_dmevents();
 	return ret;
 }

@@ -1,10 +1,15 @@
 [Unit]
 Description=multipathd control socket
 DefaultDependencies=no
+ConditionKernelCommandLine=!nompath
+ConditionKernelCommandLine=!multipath=off
+ConditionVirtualization=!container
 Before=sockets.target
 
 [Socket]
 ListenStream=@/org/kernel/linux/storage/multipathd
 
 [Install]
-WantedBy=sockets.target
+# Socket activation for multipathd is disabled by default.
+# Activate it here if you find it useful.
+# WantedBy=sockets.target

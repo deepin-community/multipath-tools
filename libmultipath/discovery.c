@@ -17,12 +17,10 @@
 
 #include "checkers.h"
 #include "vector.h"
-#include "memory.h"
 #include "util.h"
 #include "structs.h"
 #include "config.h"
 #include "blacklist.h"
-#include "callout.h"
 #include "debug.h"
 #include "propsel.h"
 #include "sg_include.h"
@@ -35,6 +33,9 @@
 #include "foreign.h"
 #include "configure.h"
 #include "print.h"
+#include "strbuf.h"
+
+#define VPD_BUFLEN 4096
 
 struct vpd_vendor_page vpd_vendor_pages[VPD_VP_ARRAY_SIZE] = {
 	[VPD_VP_UNDEF]	= { 0x00, "undef" },
@@ -200,6 +201,9 @@ path_discovery (vector pathvec, int flag)
 		const char *devtype;
 		const char *devpath;
 
+		if (should_exit())
+			break;
+
 		devpath = udev_list_entry_get_name(entry);
 		condlog(4, "Discover device %s", devpath);
 		udevice = udev_device_new_from_syspath(udev, devpath);
@@ -214,7 +218,8 @@ path_discovery (vector pathvec, int flag)
 					  udevice, flag) == PATHINFO_OK)
 				num_paths++;
 		}
-		udevice = udev_device_unref(udevice);
+		udev_device_unref(udevice);
+		udevice = NULL;
 	}
 	ret = total_paths - num_paths;
 	condlog(4, "Discovered %d/%d paths", num_paths, total_paths);
@@ -259,41 +264,19 @@ declare_sysfs_get_str(vendor);
 declare_sysfs_get_str(model);
 declare_sysfs_get_str(rev);
 
-static ssize_t
-sysfs_get_binary (struct udev_device * udev, const char *attrname,
-		  unsigned char *buff, size_t len)
-{
-	ssize_t attr_len;
-	const char * devname;
-
-	if (!udev) {
-		condlog(3, "No udev device given\n");
-		return -ENOSYS;
-	}
-
-	devname = udev_device_get_sysname(udev);
-	attr_len = sysfs_bin_attr_get_value(udev, attrname, buff, len);
-	if (attr_len < 0) {
-		condlog(3, "%s: attribute %s not found in sysfs",
-			devname, attrname);
-		return attr_len;
-	}
-	return attr_len;
-}
-
 ssize_t sysfs_get_vpd(struct udev_device * udev, unsigned char pg,
 		      unsigned char *buff, size_t len)
 {
 	char attrname[9];
 
 	snprintf(attrname, sizeof(attrname), "vpd_pg%02x", pg);
-	return sysfs_get_binary(udev, attrname, buff, len);
+	return sysfs_bin_attr_get_value(udev, attrname, buff, len);
 }
 
 ssize_t sysfs_get_inquiry(struct udev_device * udev,
 			  unsigned char *buff, size_t len)
 {
-	return sysfs_get_binary(udev, "inquiry", buff, len);
+	return sysfs_bin_attr_get_value(udev, "inquiry", buff, len);
 }
 
 int
@@ -355,10 +338,17 @@ sysfs_get_tgt_nodename(struct path *pp, char *node)
 	if (value) {
 		tgtdev = udev_device_get_parent(parent);
 		while (tgtdev) {
+			char c;
+
 			tgtname = udev_device_get_sysname(tgtdev);
-			if (tgtname && sscanf(tgtname, "end_device-%d:%d",
-				   &host, &tgtid) == 2)
-				break;
+			if (tgtname) {
+				if (sscanf(tgtname, "end_device-%d:%d:%d%c",
+					   &host, &channel, &tgtid, &c) == 3)
+					break;
+				if (sscanf(tgtname, "end_device-%d:%d%c",
+					   &host, &tgtid, &c) == 2)
+					break;
+			}
 			tgtdev = udev_device_get_parent(tgtdev);
 			tgtid = -1;
 		}
@@ -377,8 +367,10 @@ sysfs_get_tgt_nodename(struct path *pp, char *node)
 		if (value && !strcmp(value, "usb")) {
 			pp->sg_id.proto_id = SCSI_PROTOCOL_USB;
 			tgtname = udev_device_get_sysname(tgtdev);
-			strlcpy(node, tgtname, NODE_NAME_SIZE);
-			return 0;
+			if (tgtname) {
+				strlcpy(node, tgtname, NODE_NAME_SIZE);
+				return 0;
+			}
 		}
 		tgtdev = udev_device_get_parent(tgtdev);
 	}
@@ -461,6 +453,49 @@ sysfs_get_tgt_nodename(struct path *pp, char *node)
 	return 0;
 }
 
+static int sysfs_get_host_bus_id(const struct path *pp, char *bus_id)
+{
+	struct udev_device *hostdev, *parent;
+	char host_name[HOST_NAME_LEN];
+	const char *driver_name, *subsystem_name, *value;
+
+	if (!pp || !bus_id)
+		return 1;
+
+	snprintf(host_name, sizeof(host_name), "host%d", pp->sg_id.host_no);
+	hostdev = udev_device_new_from_subsystem_sysname(udev,
+			"scsi_host", host_name);
+	if (!hostdev)
+		return 1;
+
+	for (parent = udev_device_get_parent(hostdev);
+	     parent;
+	     parent = udev_device_get_parent(parent)) {
+		driver_name = udev_device_get_driver(parent);
+		subsystem_name = udev_device_get_subsystem(parent);
+		if (driver_name && !strcmp(driver_name, "pcieport"))
+			break;
+		if (subsystem_name && !strcmp(subsystem_name, "ccw"))
+			break;
+	}
+	if (parent) {
+		/* pci_device or ccw fcp device found
+		 */
+		value = udev_device_get_sysname(parent);
+
+		if (!value) {
+			udev_device_unref(hostdev);
+			return 1;
+		}
+
+		strlcpy(bus_id, value, SLOT_NAME_SIZE);
+		udev_device_unref(hostdev);
+		return 0;
+	}
+	udev_device_unref(hostdev);
+	return 1;
+}
+
 int sysfs_get_host_adapter_name(const struct path *pp, char *adapter_name)
 {
 	int proto_id;
@@ -470,10 +505,11 @@ int sysfs_get_host_adapter_name(const struct path *pp, char *adapter_name)
 
 	proto_id = pp->sg_id.proto_id;
 
-	if (proto_id != SCSI_PROTOCOL_FCP &&
-	    proto_id != SCSI_PROTOCOL_SAS &&
-	    proto_id != SCSI_PROTOCOL_ISCSI &&
-	    proto_id != SCSI_PROTOCOL_SRP) {
+	if (pp->bus != SYSFS_BUS_SCSI ||
+	    (proto_id != SCSI_PROTOCOL_FCP &&
+	     proto_id != SCSI_PROTOCOL_SAS &&
+	     proto_id != SCSI_PROTOCOL_ISCSI &&
+	     proto_id != SCSI_PROTOCOL_SRP)) {
 		return 1;
 	}
 	/* iscsi doesn't have adapter info in sysfs
@@ -482,53 +518,9 @@ int sysfs_get_host_adapter_name(const struct path *pp, char *adapter_name)
 	if (pp->sg_id.proto_id == SCSI_PROTOCOL_ISCSI)
 		return sysfs_get_iscsi_ip_address(pp, adapter_name);
 
-	/* fetch adapter pci name for other protocols
+	/* fetch adapter bus-ID for other protocols
 	 */
-	return sysfs_get_host_pci_name(pp, adapter_name);
-}
-
-int sysfs_get_host_pci_name(const struct path *pp, char *pci_name)
-{
-	struct udev_device *hostdev, *parent;
-	char host_name[HOST_NAME_LEN];
-	const char *driver_name, *value;
-
-	if (!pp || !pci_name)
-		return 1;
-
-	sprintf(host_name, "host%d", pp->sg_id.host_no);
-	hostdev = udev_device_new_from_subsystem_sysname(udev,
-			"scsi_host", host_name);
-	if (!hostdev)
-		return 1;
-
-	parent = udev_device_get_parent(hostdev);
-	while (parent) {
-		driver_name = udev_device_get_driver(parent);
-		if (!driver_name) {
-			parent = udev_device_get_parent(parent);
-			continue;
-		}
-		if (!strcmp(driver_name, "pcieport"))
-			break;
-		parent = udev_device_get_parent(parent);
-	}
-	if (parent) {
-		/* pci_device found
-		 */
-		value = udev_device_get_sysname(parent);
-
-		if (!value) {
-			udev_device_unref(hostdev);
-			return 1;
-		}
-
-		strncpy(pci_name, value, SLOT_NAME_SIZE);
-		udev_device_unref(hostdev);
-		return 0;
-	}
-	udev_device_unref(hostdev);
-	return 1;
+	return sysfs_get_host_bus_id(pp, adapter_name);
 }
 
 int sysfs_get_iscsi_ip_address(const struct path *pp, char *ip_address)
@@ -570,10 +562,10 @@ sysfs_get_asymmetric_access_state(struct path *pp, char *buff, int buflen)
 	if (!parent)
 		return -1;
 
-	if (sysfs_attr_get_value(parent, "access_state", buff, buflen) <= 0)
+	if (!sysfs_attr_get_value_ok(parent, "access_state", buff, buflen))
 		return -1;
 
-	if (sysfs_attr_get_value(parent, "preferred_path", value, 16) <= 0)
+	if (!sysfs_attr_get_value_ok(parent, "preferred_path", value, sizeof(value)))
 		return 0;
 
 	preferred = strtoul(value, &eptr, 0);
@@ -584,14 +576,93 @@ sysfs_get_asymmetric_access_state(struct path *pp, char *buff, int buflen)
 	return !!preferred;
 }
 
+static int
+sysfs_set_eh_deadline(struct path *pp)
+{
+	struct udev_device *hostdev;
+	char host_name[HOST_NAME_LEN], value[16];
+	int ret, len;
+
+	if (pp->eh_deadline == EH_DEADLINE_UNSET)
+		return 0;
+
+	sprintf(host_name, "host%d", pp->sg_id.host_no);
+	hostdev = udev_device_new_from_subsystem_sysname(udev,
+			"scsi_host", host_name);
+	if (!hostdev)
+		return 1;
+
+	if (pp->eh_deadline == EH_DEADLINE_OFF)
+		len = sprintf(value, "off");
+	else if (pp->eh_deadline == EH_DEADLINE_ZERO)
+		len = sprintf(value, "0");
+	else
+		len = sprintf(value, "%d", pp->eh_deadline);
+
+	ret = sysfs_attr_set_value(hostdev, "eh_deadline",
+				   value, len);
+	/*
+	 * not all scsi drivers support setting eh_deadline, so failing
+	 * is totally reasonable
+	 */
+	if (ret != len)
+		log_sysfs_attr_set_value(3, ret,
+			"%s: failed to set eh_deadline to %s",
+			udev_device_get_sysname(hostdev), value);
+
+	udev_device_unref(hostdev);
+	return (ret <= 0);
+}
+
+static int
+sysfs_set_max_retries(struct config *conf, struct path *pp)
+{
+	struct udev_device *parent;
+	char value[16];
+	STRBUF_ON_STACK(buf);
+	int ret, len;
+
+	if (conf->max_retries == MAX_RETRIES_UNSET)
+		return 0;
+
+	if (!pp->udev || pp->sg_id.host_no < 0)
+		return 1;
+
+	len = sprintf(value, "%d", (conf->max_retries == MAX_RETRIES_OFF)? -1 :
+				   (conf->max_retries == MAX_RETRIES_ZERO)? 0 :
+				   conf->max_retries);
+
+	parent = udev_device_get_parent_with_subsystem_devtype(pp->udev,
+			"scsi", "scsi_device");
+	if (!parent)
+		return 1;
+
+	if (print_strbuf(&buf, "scsi_disk/%i:%i:%i:%" PRIu64 "/max_retries",
+			 pp->sg_id.host_no, pp->sg_id.channel,
+			 pp->sg_id.scsi_id, pp->sg_id.lun) < 0)
+		return 1;
+
+	ret = sysfs_attr_set_value(parent, get_strbuf_str(&buf), value, len);
+	if (len != ret)
+		log_sysfs_attr_set_value(3, ret,
+					 "%s/%s: failed to set value to %s",
+					 udev_device_get_sysname(parent),
+					 get_strbuf_str(&buf), value);
+	return (len != ret);
+}
+
 static void
 sysfs_set_rport_tmo(struct multipath *mpp, struct path *pp)
 {
 	struct udev_device *rport_dev = NULL;
 	char value[16], *eptr;
-	char rport_id[32];
+	char rport_id[42];
 	unsigned int tmo;
 	int ret;
+
+	if (pp->dev_loss == DEV_LOSS_TMO_UNSET &&
+	    pp->fast_io_fail == MP_FAST_IO_FAIL_UNSET)
+		return;
 
 	sprintf(rport_id, "rport-%d:%d-%d",
 		pp->sg_id.host_no, pp->sg_id.channel, pp->sg_id.transport_id);
@@ -608,8 +679,8 @@ sysfs_set_rport_tmo(struct multipath *mpp, struct path *pp)
 	/*
 	 * read the current dev_loss_tmo value from sysfs
 	 */
-	ret = sysfs_attr_get_value(rport_dev, "dev_loss_tmo", value, 16);
-	if (ret <= 0) {
+	ret = sysfs_attr_get_value(rport_dev, "dev_loss_tmo", value, sizeof(value));
+	if (!sysfs_attr_value_ok(ret, sizeof(value))) {
 		condlog(0, "%s: failed to read dev_loss_tmo value, "
 			"error %d", rport_id, -ret);
 		goto out;
@@ -632,61 +703,71 @@ sysfs_set_rport_tmo(struct multipath *mpp, struct path *pp)
 	 * then set fast_io_fail, and _then_ set dev_loss_tmo
 	 * to the correct value.
 	 */
-	if (mpp->fast_io_fail != MP_FAST_IO_FAIL_UNSET &&
-	    mpp->fast_io_fail != MP_FAST_IO_FAIL_ZERO &&
-	    mpp->fast_io_fail != MP_FAST_IO_FAIL_OFF) {
+	if (pp->fast_io_fail != MP_FAST_IO_FAIL_UNSET &&
+	    pp->fast_io_fail != MP_FAST_IO_FAIL_ZERO &&
+	    pp->fast_io_fail != MP_FAST_IO_FAIL_OFF) {
 		/* Check if we need to temporarily increase dev_loss_tmo */
-		if ((unsigned int)mpp->fast_io_fail >= tmo) {
+		if ((unsigned int)pp->fast_io_fail >= tmo) {
+			ssize_t len;
+
 			/* Increase dev_loss_tmo temporarily */
 			snprintf(value, sizeof(value), "%u",
-				 (unsigned int)mpp->fast_io_fail + 1);
+				 (unsigned int)pp->fast_io_fail + 1);
+			len = strlen(value);
 			ret = sysfs_attr_set_value(rport_dev, "dev_loss_tmo",
-						   value, strlen(value));
-			if (ret <= 0) {
+						   value, len);
+			if (ret != len) {
 				if (ret == -EBUSY)
 					condlog(3, "%s: rport blocked",
 						rport_id);
 				else
-					condlog(0, "%s: failed to set "
-						"dev_loss_tmo to %s, error %d",
-						rport_id, value, -ret);
+					log_sysfs_attr_set_value(0, ret,
+						"%s: failed to set dev_loss_tmo to %s",
+						rport_id, value);
 				goto out;
 			}
 		}
-	} else if (mpp->dev_loss > DEFAULT_DEV_LOSS_TMO &&
-		mpp->no_path_retry != NO_PATH_RETRY_QUEUE) {
+	} else if (pp->dev_loss > DEFAULT_DEV_LOSS_TMO &&
+		   mpp->no_path_retry != NO_PATH_RETRY_QUEUE) {
 		condlog(2, "%s: limiting dev_loss_tmo to %d, since "
 			"fast_io_fail is not set",
 			rport_id, DEFAULT_DEV_LOSS_TMO);
-		mpp->dev_loss = DEFAULT_DEV_LOSS_TMO;
+		pp->dev_loss = DEFAULT_DEV_LOSS_TMO;
 	}
-	if (mpp->fast_io_fail != MP_FAST_IO_FAIL_UNSET) {
-		if (mpp->fast_io_fail == MP_FAST_IO_FAIL_OFF)
+	if (pp->fast_io_fail != MP_FAST_IO_FAIL_UNSET) {
+		ssize_t len;
+
+		if (pp->fast_io_fail == MP_FAST_IO_FAIL_OFF)
 			sprintf(value, "off");
-		else if (mpp->fast_io_fail == MP_FAST_IO_FAIL_ZERO)
+		else if (pp->fast_io_fail == MP_FAST_IO_FAIL_ZERO)
 			sprintf(value, "0");
 		else
-			snprintf(value, 16, "%u", mpp->fast_io_fail);
+			snprintf(value, 16, "%u", pp->fast_io_fail);
+		len = strlen(value);
 		ret = sysfs_attr_set_value(rport_dev, "fast_io_fail_tmo",
-					   value, strlen(value));
-		if (ret <= 0) {
+					   value, len);
+		if (ret != len) {
 			if (ret == -EBUSY)
 				condlog(3, "%s: rport blocked", rport_id);
 			else
-				condlog(0, "%s: failed to set fast_io_fail_tmo to %s, error %d",
-					rport_id, value, -ret);
+				log_sysfs_attr_set_value(0, ret,
+					"%s: failed to set fast_io_fail_tmo to %s",
+					rport_id, value);
 		}
 	}
-	if (mpp->dev_loss != DEV_LOSS_TMO_UNSET) {
-		snprintf(value, 16, "%u", mpp->dev_loss);
-		ret = sysfs_attr_set_value(rport_dev, "dev_loss_tmo",
-					   value, strlen(value));
-		if (ret <= 0) {
+	if (pp->dev_loss != DEV_LOSS_TMO_UNSET) {
+		ssize_t len;
+
+		snprintf(value, 16, "%u", pp->dev_loss);
+		len = strlen(value);
+		ret = sysfs_attr_set_value(rport_dev, "dev_loss_tmo", value, len);
+		if (ret != len) {
 			if (ret == -EBUSY)
 				condlog(3, "%s: rport blocked", rport_id);
 			else
-				condlog(0, "%s: failed to set dev_loss_tmo to %s, error %d",
-					rport_id, value, -ret);
+				log_sysfs_attr_set_value(0, ret,
+					"%s: failed to set dev_loss_tmo to %s",
+					rport_id, value);
 		}
 	}
 out:
@@ -694,11 +775,16 @@ out:
 }
 
 static void
-sysfs_set_session_tmo(struct multipath *mpp, struct path *pp)
+sysfs_set_session_tmo(struct path *pp)
 {
 	struct udev_device *session_dev = NULL;
 	char session_id[64];
 	char value[11];
+
+	if (pp->dev_loss != DEV_LOSS_TMO_UNSET)
+		condlog(3, "%s: ignoring dev_loss_tmo on iSCSI", pp->dev);
+	if (pp->fast_io_fail == MP_FAST_IO_FAIL_UNSET)
+		return;
 
 	sprintf(session_id, "session%d", pp->sg_id.transport_id);
 	session_dev = udev_device_new_from_subsystem_sysname(udev,
@@ -711,23 +797,24 @@ sysfs_set_session_tmo(struct multipath *mpp, struct path *pp)
 	condlog(4, "target%d:%d:%d -> %s", pp->sg_id.host_no,
 		pp->sg_id.channel, pp->sg_id.scsi_id, session_id);
 
-	if (mpp->dev_loss != DEV_LOSS_TMO_UNSET) {
-		condlog(3, "%s: ignoring dev_loss_tmo on iSCSI", pp->dev);
-	}
-	if (mpp->fast_io_fail != MP_FAST_IO_FAIL_UNSET) {
-		if (mpp->fast_io_fail == MP_FAST_IO_FAIL_OFF) {
+	if (pp->fast_io_fail != MP_FAST_IO_FAIL_UNSET) {
+		if (pp->fast_io_fail == MP_FAST_IO_FAIL_OFF) {
 			condlog(3, "%s: can't switch off fast_io_fail_tmo "
 				"on iSCSI", pp->dev);
-		} else if (mpp->fast_io_fail == MP_FAST_IO_FAIL_ZERO) {
+		} else if (pp->fast_io_fail == MP_FAST_IO_FAIL_ZERO) {
 			condlog(3, "%s: can't set fast_io_fail_tmo to '0'"
 				"on iSCSI", pp->dev);
 		} else {
-			snprintf(value, 11, "%u", mpp->fast_io_fail);
-			if (sysfs_attr_set_value(session_dev, "recovery_tmo",
-						 value, strlen(value)) <= 0) {
-				condlog(3, "%s: Failed to set recovery_tmo, "
-					" error %d", pp->dev, errno);
-			}
+			ssize_t len, ret;
+
+			snprintf(value, 11, "%u", pp->fast_io_fail);
+			len = strlen(value);
+			ret = sysfs_attr_set_value(session_dev, "recovery_tmo",
+						   value, len);
+			if (ret != len)
+				log_sysfs_attr_set_value(3, ret,
+					"%s: Failed to set recovery_tmo to %s",
+							 pp->dev, value);
 		}
 	}
 	udev_device_unref(session_dev);
@@ -735,14 +822,30 @@ sysfs_set_session_tmo(struct multipath *mpp, struct path *pp)
 }
 
 static void
-sysfs_set_nexus_loss_tmo(struct multipath *mpp, struct path *pp)
+sysfs_set_nexus_loss_tmo(struct path *pp)
 {
-	struct udev_device *sas_dev = NULL;
-	char end_dev_id[64];
+	struct udev_device *parent, *sas_dev = NULL;
+	const char *end_dev_id = NULL;
 	char value[11];
+	static const char ed_str[] = "end_device-";
 
-	sprintf(end_dev_id, "end_device-%d:%d",
-		pp->sg_id.host_no, pp->sg_id.transport_id);
+	if (!pp->udev || pp->dev_loss == DEV_LOSS_TMO_UNSET)
+		return;
+
+	for (parent = udev_device_get_parent(pp->udev);
+	     parent;
+	     parent = udev_device_get_parent(parent)) {
+		const char *ed = udev_device_get_sysname(parent);
+
+		if (ed && !strncmp(ed, ed_str, sizeof(ed_str) - 1)) {
+			end_dev_id = ed;
+			break;
+		}
+	}
+	if (!end_dev_id) {
+		condlog(1, "%s: No SAS end device", pp->dev);
+		return;
+	}
 	sas_dev = udev_device_new_from_subsystem_sysname(udev,
 				"sas_end_device", end_dev_id);
 	if (!sas_dev) {
@@ -753,84 +856,125 @@ sysfs_set_nexus_loss_tmo(struct multipath *mpp, struct path *pp)
 	condlog(4, "target%d:%d:%d -> %s", pp->sg_id.host_no,
 		pp->sg_id.channel, pp->sg_id.scsi_id, end_dev_id);
 
-	if (mpp->dev_loss != DEV_LOSS_TMO_UNSET) {
-		snprintf(value, 11, "%u", mpp->dev_loss);
-		if (sysfs_attr_set_value(sas_dev, "I_T_nexus_loss_timeout",
-					 value, strlen(value)) <= 0)
-			condlog(3, "%s: failed to update "
-				"I_T Nexus loss timeout, error %d",
-				pp->dev, errno);
+	if (pp->dev_loss != DEV_LOSS_TMO_UNSET) {
+		ssize_t len, ret;
+
+		snprintf(value, 11, "%u", pp->dev_loss);
+		len = strlen(value);
+		ret = sysfs_attr_set_value(sas_dev, "I_T_nexus_loss_timeout",
+					   value, len);
+		if (ret != len)
+			log_sysfs_attr_set_value(3, ret,
+				"%s: failed to update I_T Nexus loss timeout",
+				pp->dev);
 	}
 	udev_device_unref(sas_dev);
 	return;
 }
 
+static void
+scsi_tmo_error_msg(struct path *pp)
+{
+	STATIC_BITFIELD(bf, LAST_BUS_PROTOCOL_ID + 1);
+	STRBUF_ON_STACK(proto_buf);
+	unsigned int proto_id = bus_protocol_id(pp);
+
+	snprint_path_protocol(&proto_buf, pp);
+	condlog(2, "%s: setting scsi timeouts is unsupported for protocol %s",
+		pp->dev, get_strbuf_str(&proto_buf));
+	set_bit_in_bitfield(proto_id, bf);
+}
+
 int
-sysfs_set_scsi_tmo (struct multipath *mpp, unsigned int checkint)
+sysfs_set_scsi_tmo (struct config *conf, struct multipath *mpp)
 {
 	struct path *pp;
 	int i;
-	unsigned int dev_loss_tmo = mpp->dev_loss;
-	struct path *err_path = NULL;
+	unsigned int min_dev_loss = 0;
+	bool warn_dev_loss = false;
+	bool warn_fast_io_fail = false;
+
+	if (mpp->action == ACT_DRY_RUN || mpp->action == ACT_REJECT)
+		return 0;
 
 	if (mpp->no_path_retry > 0) {
 		uint64_t no_path_retry_tmo =
-			(uint64_t)mpp->no_path_retry * checkint;
+			(uint64_t)mpp->no_path_retry * conf->checkint;
+
+		/* pad no_path_retry_tmo by one standard check interval
+		 * plus one second per minute to account for timing
+		 * issues with the rechecks */
+		no_path_retry_tmo += no_path_retry_tmo / 60 + DEFAULT_CHECKINT;
 
 		if (no_path_retry_tmo > MAX_DEV_LOSS_TMO)
-			no_path_retry_tmo = MAX_DEV_LOSS_TMO;
-		if (no_path_retry_tmo > dev_loss_tmo)
-			dev_loss_tmo = no_path_retry_tmo;
-	} else if (mpp->no_path_retry == NO_PATH_RETRY_QUEUE) {
-		dev_loss_tmo = MAX_DEV_LOSS_TMO;
-	}
-	if (mpp->dev_loss != DEV_LOSS_TMO_UNSET &&
-	    mpp->dev_loss != dev_loss_tmo) {
-		condlog(2, "%s: Using dev_loss_tmo=%u instead of %u because of no_path_retry setting",
-			mpp->alias, dev_loss_tmo, mpp->dev_loss);
-		mpp->dev_loss = dev_loss_tmo;
-	}
-	if (mpp->dev_loss != DEV_LOSS_TMO_UNSET &&
-	    mpp->fast_io_fail != MP_FAST_IO_FAIL_UNSET &&
-	    (unsigned int)mpp->fast_io_fail >= mpp->dev_loss) {
-		condlog(3, "%s: turning off fast_io_fail (%d is not smaller than dev_loss_tmo)",
-			mpp->alias, mpp->fast_io_fail);
-		mpp->fast_io_fail = MP_FAST_IO_FAIL_OFF;
-	}
-	if (mpp->dev_loss == DEV_LOSS_TMO_UNSET &&
-	    mpp->fast_io_fail == MP_FAST_IO_FAIL_UNSET)
-		return 0;
+			min_dev_loss = MAX_DEV_LOSS_TMO;
+		else
+			min_dev_loss = no_path_retry_tmo;
+	} else if (mpp->no_path_retry == NO_PATH_RETRY_QUEUE)
+		min_dev_loss = MAX_DEV_LOSS_TMO;
 
 	vector_foreach_slot(mpp->paths, pp, i) {
-		if (pp->bus != SYSFS_BUS_SCSI) {
-			if (!err_path)
-				err_path = pp;
+		select_fast_io_fail(conf, pp);
+		select_dev_loss(conf, pp);
+		select_eh_deadline(conf, pp);
+
+		if (pp->dev_loss == DEV_LOSS_TMO_UNSET &&
+		    pp->fast_io_fail == MP_FAST_IO_FAIL_UNSET &&
+		    pp->eh_deadline == EH_DEADLINE_UNSET &&
+		    conf->max_retries == MAX_RETRIES_UNSET)
 			continue;
+
+		if (pp->bus != SYSFS_BUS_SCSI) {
+			scsi_tmo_error_msg(pp);
+			continue;
+		}
+		sysfs_set_eh_deadline(pp);
+		sysfs_set_max_retries(conf, pp);
+
+		if (pp->dev_loss == DEV_LOSS_TMO_UNSET &&
+		    pp->fast_io_fail == MP_FAST_IO_FAIL_UNSET)
+			continue;
+
+		if (pp->sg_id.proto_id != SCSI_PROTOCOL_FCP &&
+		    pp->sg_id.proto_id != SCSI_PROTOCOL_ISCSI &&
+		    pp->sg_id.proto_id != SCSI_PROTOCOL_SAS) {
+			scsi_tmo_error_msg(pp);
+			continue;
+		}
+
+		if (pp->dev_loss == DEV_LOSS_TMO_UNSET)
+			pp->dev_loss = min_dev_loss;
+		else if (pp->dev_loss < min_dev_loss) {
+			pp->dev_loss = min_dev_loss;
+			warn_dev_loss = true;
+		}
+		if (pp->dev_loss != DEV_LOSS_TMO_UNSET &&
+		    pp->fast_io_fail > 0 &&
+		    (unsigned int)pp->fast_io_fail >= pp->dev_loss) {
+			warn_fast_io_fail = true;
+			pp->fast_io_fail = MP_FAST_IO_FAIL_OFF;
 		}
 
 		switch (pp->sg_id.proto_id) {
 		case SCSI_PROTOCOL_FCP:
 			sysfs_set_rport_tmo(mpp, pp);
-			continue;
+			break;
 		case SCSI_PROTOCOL_ISCSI:
-			sysfs_set_session_tmo(mpp, pp);
-			continue;
+			sysfs_set_session_tmo(pp);
+			break;
 		case SCSI_PROTOCOL_SAS:
-			sysfs_set_nexus_loss_tmo(mpp, pp);
-			continue;
+			sysfs_set_nexus_loss_tmo(pp);
+			break;
 		default:
-			if (!err_path)
-				err_path = pp;
+			break;
 		}
 	}
-
-	if (err_path) {
-		char proto_buf[32];
-
-		snprint_path_protocol(proto_buf, sizeof(proto_buf), err_path);
-		condlog(2, "%s: setting dev_loss_tmo is unsupported for protocol %s",
-			mpp->alias, proto_buf);
-	}
+	if (warn_dev_loss)
+		condlog(2, "%s: Raising dev_loss_tmo to %u because of no_path_retry setting",
+			mpp->alias, min_dev_loss);
+	if (warn_fast_io_fail)
+		condlog(3, "%s: turning off fast_io_fail (not smaller than dev_loss_tmo)",
+			mpp->alias);
 	return 0;
 }
 
@@ -918,18 +1062,13 @@ detect_alua(struct path * pp)
 {
 	int ret;
 	int tpgs;
-	unsigned int timeout;
-
 
 	if (pp->bus != SYSFS_BUS_SCSI) {
 		pp->tpgs = TPGS_NONE;
 		return;
 	}
 
-	if (sysfs_get_timeout(pp, &timeout) <= 0)
-		timeout = DEF_TIMEOUT;
-
-	tpgs = get_target_port_group_support(pp, timeout);
+	tpgs = get_target_port_group_support(pp);
 	if (tpgs == -RTPG_INQUIRY_FAILED)
 		return;
 	else if (tpgs <= 0) {
@@ -940,8 +1079,8 @@ detect_alua(struct path * pp)
 	if (pp->fd == -1 || pp->offline)
 		return;
 
-	ret = get_target_port_group(pp, timeout);
-	if (ret < 0 || get_asymmetric_access_state(pp, ret, timeout) < 0) {
+	ret = get_target_port_group(pp);
+	if (ret < 0 || get_asymmetric_access_state(pp, ret) < 0) {
 		int state;
 
 		if (ret == -RTPG_INQUIRY_FAILED)
@@ -955,6 +1094,7 @@ detect_alua(struct path * pp)
 		return;
 	}
 	pp->tpgs = tpgs;
+	pp->tpg_id = ret;
 }
 
 int path_get_tpgs(struct path *pp)
@@ -1014,6 +1154,8 @@ parse_vpd_pg80(const unsigned char *in, char *out, size_t out_len)
 	if (out_len == 0)
 		return 0;
 
+	if (len > WWID_SIZE)
+		len = WWID_SIZE;
 	/*
 	 * Strip leading and trailing whitespace
 	 */
@@ -1043,177 +1185,208 @@ parse_vpd_pg83(const unsigned char *in, size_t in_len,
 	const unsigned char *d;
 	const unsigned char *vpd = NULL;
 	size_t len, vpd_len, i;
-	int vpd_type, prio = -1, naa_prio;
+	int vpd_type, prio = -1;
+	int err = -ENODATA;
+	STRBUF_ON_STACK(buf);
+
+	/* Need space at least for one digit */
+	if (out_len <= 1)
+		return 0;
 
 	d = in + 4;
-	while (d < in + in_len) {
+	while (d <= in + in_len - 4) {
+		bool invalid = false;
+		int new_prio = -1;
+
 		/* Select 'association: LUN' */
-		if ((d[1] & 0x30) != 0) {
-			d += d[3] + 4;
-			continue;
-		}
+		if ((d[1] & 0x30) == 0x30) {
+			invalid = true;
+			goto next_designator;
+		} else if ((d[1] & 0x30) != 0x00)
+			goto next_designator;
+
 		switch (d[1] & 0xf) {
+			unsigned char good_len;
 		case 0x3:
 			/* NAA: Prio 5 */
 			switch (d[4] >> 4) {
 			case 6:
 				/* IEEE Registered Extended: Prio 8 */
-				naa_prio = 8;
+				new_prio = 8;
+				good_len = 16;
 				break;
 			case 5:
 				/* IEEE Registered: Prio 7 */
-				naa_prio = 7;
+				new_prio = 7;
+				good_len = 8;
 				break;
 			case 2:
 				/* IEEE Extended: Prio 6 */
-				naa_prio = 6;
+				new_prio = 6;
+				good_len = 8;
 				break;
 			case 3:
 				/* IEEE Locally assigned: Prio 1 */
-				naa_prio = 1;
+				new_prio = 1;
+				good_len = 8;
 				break;
 			default:
 				/* Default: no priority */
-				naa_prio = -1;
+				good_len = 0xff;
 				break;
 			}
-			if (prio < naa_prio) {
-				prio = naa_prio;
-				vpd = d;
-			}
-			break;
-		case 0x8:
-			/* SCSI Name: Prio 4 */
-			if (memcmp(d + 4, "eui.", 4) &&
-			    memcmp(d + 4, "naa.", 4) &&
-			    memcmp(d + 4, "iqn.", 4))
-				continue;
-			if (prio < 4) {
-				prio = 4;
-				vpd = d;
-			}
+
+			invalid = good_len == 0xff || good_len != d[3];
 			break;
 		case 0x2:
-			/* EUI-64: Prio 3 */
-			if (prio < 3) {
-				prio = 3;
-				vpd = d;
-			}
+			/* EUI-64: Prio 4 */
+			invalid = (d[3] != 8 && d[3] != 12 && d[3] != 16);
+			new_prio = 4;
+			break;
+		case 0x8:
+			/* SCSI Name: Prio 3 */
+			invalid = (d[3] < 4 || (memcmp(d + 4, "eui.", 4) &&
+						memcmp(d + 4, "naa.", 4) &&
+						memcmp(d + 4, "iqn.", 4)));
+			new_prio = 3;
 			break;
 		case 0x1:
 			/* T-10 Vendor ID: Prio 2 */
-			if (prio < 2) {
-				prio = 2;
-				vpd = d;
-			}
+			invalid = (d[3] < 8);
+			new_prio = 2;
 			break;
+		case 0x6:
+			/* Logical Unit Group */
+			invalid = (d[3] != 4);
+			break;
+		case 0x7:
+			/* MD5 logical unit designator */
+			invalid = (d[3] != 16);
+			break;
+		case 0x0:
+			/* Vendor Specific */
+			break;
+		case 0xa:
+			condlog(2, "%s: UUID identifiers not yet supported",
+				__func__);
+			break;
+		default:
+			invalid = true;
+			break;
+		}
+
+	next_designator:
+		if (d + d[3] + 4 - in > (ssize_t)in_len) {
+			condlog(2, "%s: device descriptor length overflow: %zd > %zu",
+				__func__, d + d[3] + 4 - in, in_len);
+			err = -EOVERFLOW;
+			break;
+		} else if (invalid) {
+			condlog(2, "%s: invalid device designator at offset %zd: %02x%02x%02x%02x",
+				__func__, d - in, d[0], d[1], d[2], d[3]);
+			/*
+			 * We checked above that the next offset is within limits.
+			 * Proceed, fingers crossed.
+			 */
+			err = -EINVAL;
+		} else if (new_prio > prio) {
+			vpd = d;
+			prio = new_prio;
 		}
 		d += d[3] + 4;
 	}
 
 	if (prio <= 0)
-		return -ENODATA;
-	/* Need space at least for one digit */
-	else if (out_len <= 1)
-		return 0;
+		return err;
+
+	if (d != in + in_len)
+		/* Should this be fatal? (overflow covered above) */
+		condlog(2, "%s: warning: last descriptor end %zd != VPD length %zu",
+			__func__, d - in, in_len);
 
 	len = 0;
 	vpd_type = vpd[1] & 0xf;
 	vpd_len = vpd[3];
 	vpd += 4;
+	/* untaint vpd_len for coverity */
+	if (vpd_len > WWID_SIZE) {
+		condlog(1, "%s: suspicious designator length %zu truncated to %u",
+			__func__, vpd_len, WWID_SIZE);
+		vpd_len = WWID_SIZE;
+	}
 	if (vpd_type == 0x2 || vpd_type == 0x3) {
 		size_t i;
 
-		len = sprintf(out, "%d", vpd_type);
-		if (2 * vpd_len >= out_len - len) {
-			condlog(1, "%s: WWID overflow, type %d, %zu/%zu bytes required",
-				__func__, vpd_type,
-				2 * vpd_len + len + 1, out_len);
-			vpd_len = (out_len - len - 1) / 2;
-		}
+		if ((err = print_strbuf(&buf, "%d", vpd_type)) < 0)
+			return err;
 		for (i = 0; i < vpd_len; i++)
-			len += sprintf(out + len,
-				       "%02x", vpd[i]);
-	} else if (vpd_type == 0x8 && vpd_len < 4) {
-		condlog(1, "%s: VPD length %zu too small for designator type 8",
-			__func__, vpd_len);
-		return -EINVAL;
+			if ((err = print_strbuf(&buf, "%02x", vpd[i])) < 0)
+				return err;
 	} else if (vpd_type == 0x8) {
+		char type;
+
 		if (!memcmp("eui.", vpd, 4))
-			out[0] =  '2';
+			type =  '2';
 		else if (!memcmp("naa.", vpd, 4))
-			out[0] = '3';
+			type = '3';
 		else
-			out[0] = '8';
+			type = '8';
+		if ((err = fill_strbuf(&buf, type, 1)) < 0)
+			return err;
 
 		vpd += 4;
 		len = vpd_len - 4;
-		while (len > 2 && vpd[len - 2] == '\0')
-			--len;
-		if (len > out_len - 1) {
-			condlog(1, "%s: WWID overflow, type 8/%c, %zu/%zu bytes required",
-				__func__, out[0], len + 1, out_len);
-			len = out_len - 1;
+		if ((err = __append_strbuf_str(&buf, (const char *)vpd, len)) < 0)
+			return err;
+
+		/* The input is 0-padded, make sure the length is correct */
+		truncate_strbuf(&buf, strlen(get_strbuf_str(&buf)));
+		len = get_strbuf_len(&buf);
+		if (type != '8') {
+			char *buffer = __get_strbuf_buf(&buf);
+
+			for (i = 0; i < len; ++i)
+				buffer[i] = tolower(buffer[i]);
 		}
-
-		if (out[0] == '8')
-			for (i = 0; i < len; ++i)
-				out[1 + i] = vpd[i];
-		else
-			for (i = 0; i < len; ++i)
-				out[1 + i] = tolower(vpd[i]);
-
-		/* designator should be 0-terminated, but let's make sure */
-		out[len] = '\0';
 
 	} else if (vpd_type == 0x1) {
 		const unsigned char *p;
 		size_t p_len;
 
-		out[0] = '1';
-		len = 1;
-		while ((p = memchr(vpd, ' ', vpd_len))) {
+		if ((err = fill_strbuf(&buf, '1', 1)) < 0)
+			return err;
+		while (vpd && (p = memchr(vpd, ' ', vpd_len))) {
 			p_len = p - vpd;
-			if (len + p_len > out_len - 1) {
-				condlog(1, "%s: WWID overflow, type 1, %zu/%zu bytes required",
-					__func__, len + p_len, out_len);
-				p_len = out_len - len - 1;
-			}
-			memcpy(out + len, vpd, p_len);
-			len += p_len;
-			if (len >= out_len - 1) {
-				out[len] = '\0';
-				break;
-			}
-			out[len] = '_';
-			len ++;
-			if (len >= out_len - 1) {
-				out[len] = '\0';
-				break;
-			}
+			if ((err = __append_strbuf_str(&buf, (const char *)vpd,
+						       p_len)) < 0)
+				return err;
 			vpd = p;
 			vpd_len -= p_len;
-			while (vpd && *vpd == ' ') {
+			while (vpd && vpd_len > 0 && *vpd == ' ') {
 				vpd++;
 				vpd_len --;
 			}
+			if (vpd_len > 0 && (err = fill_strbuf(&buf, '_', 1)) < 0)
+				return err;
 		}
-		p_len = vpd_len;
-		if (p_len > 0 && len < out_len - 1) {
-			if (len + p_len > out_len - 1) {
-				condlog(1, "%s: WWID overflow, type 1, %zu/%zu bytes required",
-					__func__, len + p_len + 1, out_len);
-				p_len = out_len - len - 1;
-			}
-			memcpy(out + len, vpd, p_len);
-			len += p_len;
-			out[len] = '\0';
-		}
-		if (len > 1 && out[len - 1] == '_') {
-			out[len - 1] = '\0';
-			len--;
+		if (vpd_len > 0) {
+			if ((err = __append_strbuf_str(&buf, (const char *)vpd,
+						       vpd_len)) < 0)
+				return err;
 		}
 	}
+
+	len = get_strbuf_len(&buf);
+	if (len >= out_len) {
+		condlog(1, "%s: WWID overflow, type %d, %zu/%zu bytes required",
+			__func__, vpd_type, len, out_len);
+		if (vpd_type == 2 || vpd_type == 3)
+			/* designator must have an even number of characters */
+			len = 2 * (out_len / 2) - 1;
+		else
+			len = out_len - 1;
+	}
+	strlcpy(out, get_strbuf_str(&buf), len + 1);
 	return len;
 }
 
@@ -1228,7 +1401,7 @@ parse_vpd_c0_hp3par(const unsigned char *in, size_t in_len,
 		condlog(3, "HP/3PAR vendor specific VPD page length too short: %zu", in_len);
 		return -EINVAL;
 	}
-	if (in[4] <= 3) /* revision must be > 3 to have Vomlume Name */
+	if (in[4] <= 3) /* revision must be > 3 to have Volume Name */
 		return -ENODATA;
 	len = get_unaligned_be32(&in[40]);
 	if (len > out_len || len + 44 > in_len) {
@@ -1244,13 +1417,16 @@ parse_vpd_c0_hp3par(const unsigned char *in, size_t in_len,
 static int
 get_vpd_sysfs (struct udev_device *parent, int pg, char * str, int maxlen)
 {
-	int len, buff_len;
-	unsigned char buff[4096];
+	int len;
+	ssize_t buff_len;
+	unsigned char buff[VPD_BUFLEN];
 
-	memset(buff, 0x0, 4096);
-	if (!parent || sysfs_get_vpd(parent, pg, buff, 4096) <= 0) {
-		condlog(3, "failed to read sysfs vpd pg%02x", pg);
-		return -EINVAL;
+	memset(buff, 0x0, VPD_BUFLEN);
+	buff_len = sysfs_get_vpd(parent, pg, buff, VPD_BUFLEN);
+	if (buff_len < 0) {
+		condlog(3, "failed to read sysfs vpd pg%02x: %s",
+			pg, strerror(-buff_len));
+		return buff_len;
 	}
 
 	if (buff[1] != pg) {
@@ -1259,8 +1435,10 @@ get_vpd_sysfs (struct udev_device *parent, int pg, char * str, int maxlen)
 		return -ENODATA;
 	}
 	buff_len = get_unaligned_be16(&buff[2]) + 4;
-	if (buff_len > 4096)
+	if (buff_len > VPD_BUFLEN) {
 		condlog(3, "vpd pg%02x page truncated", pg);
+		buff_len = VPD_BUFLEN;
+	}
 
 	if (pg == 0x80)
 		len = parse_vpd_pg80(buff, str, maxlen);
@@ -1272,14 +1450,13 @@ get_vpd_sysfs (struct udev_device *parent, int pg, char * str, int maxlen)
 	return len;
 }
 
-int
-get_vpd_sgio (int fd, int pg, int vend_id, char * str, int maxlen)
+static int
+fetch_vpd_page(int fd, int pg, unsigned char *buff, int maxlen)
 {
-	int len, buff_len;
-	unsigned char buff[4096];
+	int buff_len;
 
-	memset(buff, 0x0, 4096);
-	if (sgio_get_vpd(buff, 4096, fd, pg) < 0) {
+	memset(buff, 0x0, maxlen);
+	if (sgio_get_vpd(buff, maxlen, fd, pg) < 0) {
 		int lvl = pg == 0x80 || pg == 0x83 ? 3 : 4;
 
 		condlog(lvl, "failed to issue vpd inquiry for pg%02x",
@@ -1293,10 +1470,39 @@ get_vpd_sgio (int fd, int pg, int vend_id, char * str, int maxlen)
 		return -ENODATA;
 	}
 	buff_len = get_unaligned_be16(&buff[2]) + 4;
-	if (buff_len > 4096) {
+	if (buff_len > maxlen) {
 		condlog(3, "vpd pg%02x page truncated", pg);
-		buff_len = 4096;
+		buff_len = maxlen;
 	}
+	return buff_len;
+}
+
+/* based on sg_inq.c from sg3_utils */
+bool
+is_vpd_page_supported(int fd, int pg)
+{
+	int i, len;
+	unsigned char buff[VPD_BUFLEN];
+
+	len = fetch_vpd_page(fd, 0x00, buff, sizeof(buff));
+	if (len < 0)
+		return false;
+
+	for (i = 4; i < len; ++i)
+		if (buff[i] == pg)
+			return true;
+	return false;
+}
+
+int
+get_vpd_sgio (int fd, int pg, int vend_id, char * str, int maxlen)
+{
+	int len, buff_len;
+	unsigned char buff[VPD_BUFLEN];
+
+	buff_len = fetch_vpd_page(fd, pg, buff, sizeof(buff));
+	if (buff_len < 0)
+		return buff_len;
 	if (pg == 0x80)
 		len = parse_vpd_pg80(buff, str, maxlen);
 	else if (pg == 0x83)
@@ -1321,6 +1527,7 @@ scsi_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 {
 	struct udev_device *parent;
 	const char *attr_path = NULL;
+	static const char unknown[] = "UNKNOWN";
 
 	parent = pp->udev;
 	while (parent) {
@@ -1329,7 +1536,7 @@ scsi_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 			attr_path = udev_device_get_sysname(parent);
 			if (!attr_path)
 				break;
-			if (sscanf(attr_path, "%i:%i:%i:%i",
+			if (sscanf(attr_path, "%i:%i:%i:%" SCNu64,
 				   &pp->sg_id.host_no,
 				   &pp->sg_id.channel,
 				   &pp->sg_id.scsi_id,
@@ -1341,19 +1548,22 @@ scsi_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 	if (!attr_path || pp->sg_id.host_no == -1)
 		return PATHINFO_FAILED;
 
-	if (sysfs_get_vendor(parent, pp->vendor_id, SCSI_VENDOR_SIZE) <= 0)
-		return PATHINFO_FAILED;;
-
+	if (sysfs_get_vendor(parent, pp->vendor_id, SCSI_VENDOR_SIZE) <= 0) {
+		condlog(1, "%s: broken device without vendor ID", pp->dev);
+		strlcpy(pp->vendor_id, unknown, SCSI_VENDOR_SIZE);
+	}
 	condlog(3, "%s: vendor = %s", pp->dev, pp->vendor_id);
 
-	if (sysfs_get_model(parent, pp->product_id, PATH_PRODUCT_SIZE) <= 0)
-		return PATHINFO_FAILED;;
-
+	if (sysfs_get_model(parent, pp->product_id, PATH_PRODUCT_SIZE) <= 0) {
+		condlog(1, "%s: broken device without product ID", pp->dev);
+		strlcpy(pp->product_id, unknown, PATH_PRODUCT_SIZE);
+	}
 	condlog(3, "%s: product = %s", pp->dev, pp->product_id);
 
-	if (sysfs_get_rev(parent, pp->rev, PATH_REV_SIZE) < 0)
-		return PATHINFO_FAILED;;
-
+	if (sysfs_get_rev(parent, pp->rev, PATH_REV_SIZE) < 0) {
+		condlog(2, "%s: broken device without revision", pp->dev);
+		strlcpy(pp->rev, unknown, PATH_REV_SIZE);
+	}
 	condlog(3, "%s: rev = %s", pp->dev, pp->rev);
 
 	/*
@@ -1364,7 +1574,7 @@ scsi_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 	/*
 	 * host / bus / target / lun
 	 */
-	condlog(3, "%s: h:b:t:l = %i:%i:%i:%i",
+	condlog(3, "%s: h:b:t:l = %i:%i:%i:%" PRIu64,
 			pp->dev,
 			pp->sg_id.host_no,
 			pp->sg_id.channel,
@@ -1389,6 +1599,7 @@ nvme_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 	struct udev_device *parent;
 	const char *attr_path = NULL;
 	const char *attr;
+	int i;
 
 	if (pp->udev)
 		attr_path = udev_device_get_sysname(pp->udev);
@@ -1410,6 +1621,18 @@ nvme_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 
 	attr = udev_device_get_sysattr_value(parent, "cntlid");
 	pp->sg_id.channel = attr ? atoi(attr) : 0;
+
+	attr = udev_device_get_sysattr_value(parent, "transport");
+	if (attr) {
+		for (i = 0; i < NVME_PROTOCOL_UNSPEC; i++){
+			if (protocol_name[SYSFS_BUS_NVME + i] &&
+			    !strcmp(attr,
+				    protocol_name[SYSFS_BUS_NVME + i] + 5)) {
+				pp->sg_id.proto_id = i;
+				break;
+			}
+		}
+	}
 
 	snprintf(pp->vendor_id, SCSI_VENDOR_SIZE, "NVME");
 	snprintf(pp->product_id, PATH_PRODUCT_SIZE, "%s",
@@ -1479,7 +1702,7 @@ ccw_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 		   &pp->sg_id.host_no,
 		   &pp->sg_id.channel,
 		   &pp->sg_id.scsi_id) == 3) {
-		condlog(3, "%s: h:b:t:l = %i:%i:%i:%i",
+		condlog(3, "%s: h:b:t:l = %i:%i:%i:%" PRIu64,
 			pp->dev,
 			pp->sg_id.host_no,
 			pp->sg_id.channel,
@@ -1538,7 +1761,7 @@ cciss_sysfs_pathinfo (struct path *pp, const struct _vector *hwtable)
 	 */
 	pp->sg_id.lun = 0;
 	pp->sg_id.channel = 0;
-	condlog(3, "%s: h:b:t:l = %i:%i:%i:%i",
+	condlog(3, "%s: h:b:t:l = %i:%i:%i:%" PRIu64,
 		pp->dev,
 		pp->sg_id.host_no,
 		pp->sg_id.channel,
@@ -1561,6 +1784,9 @@ common_sysfs_pathinfo (struct path * pp)
 		return PATHINFO_FAILED;
 	}
 	devt = udev_device_get_devnum(pp->udev);
+	if (major(devt) == 0 && minor(devt) == 0)
+		return PATHINFO_FAILED;
+
 	snprintf(pp->dev_t, BLK_DEV_SIZE, "%d:%d", major(devt), minor(devt));
 
 	condlog(4, "%s: dev_t = %s", pp->dev, pp->dev_t);
@@ -1605,8 +1831,8 @@ path_offline (struct path * pp)
 	}
 
 	memset(buff, 0x0, SCSI_STATE_SIZE);
-	err = sysfs_attr_get_value(parent, "state", buff, SCSI_STATE_SIZE);
-	if (err <= 0) {
+	err = sysfs_attr_get_value(parent, "state", buff, sizeof(buff));
+	if (!sysfs_attr_value_ok(err, sizeof(buff))) {
 		if (err == -ENXIO)
 			return PATH_REMOVED;
 		else
@@ -1658,11 +1884,14 @@ sysfs_pathinfo(struct path *pp, const struct _vector *hwtable)
 		pp->bus = SYSFS_BUS_CCISS;
 	if (!strncmp(pp->dev,"dasd", 4))
 		pp->bus = SYSFS_BUS_CCW;
-	if (!strncmp(pp->dev,"sd", 2))
+	if (!strncmp(pp->dev,"sd", 2)) {
 		pp->bus = SYSFS_BUS_SCSI;
-	if (!strncmp(pp->dev,"nvme", 4))
+		pp->sg_id.proto_id = SCSI_PROTOCOL_UNSPEC;
+	}
+	if (!strncmp(pp->dev,"nvme", 4)) {
 		pp->bus = SYSFS_BUS_NVME;
-
+		pp->sg_id.proto_id = NVME_PROTOCOL_UNSPEC;
+	}
 	switch (pp->bus) {
 	case SYSFS_BUS_SCSI:
 		return scsi_sysfs_pathinfo(pp, hwtable);
@@ -1714,7 +1943,7 @@ scsi_ioctl_pathinfo (struct path * pp, int mask)
 			attr_path = udev_device_get_sysname(parent);
 			if (!attr_path)
 				break;
-			if (sscanf(attr_path, "%i:%i:%i:%i",
+			if (sscanf(attr_path, "%i:%i:%i:%" SCNu64,
 				   &pp->sg_id.host_no,
 				   &pp->sg_id.channel,
 				   &pp->sg_id.scsi_id,
@@ -1778,9 +2007,6 @@ get_state (struct path * pp, struct config *conf, int daemon, int oldstate)
 		checker_set_async(c);
 	else
 		checker_set_sync(c);
-	if (!conf->checker_timeout &&
-	    sysfs_get_timeout(pp, &(c->timeout)) <= 0)
-		c->timeout = DEF_TIMEOUT;
 	state = checker_check(c, oldstate);
 	condlog(3, "%s: %s state = %s", pp->dev,
 		checker_name(c), checker_state_name(state));
@@ -1792,7 +2018,7 @@ get_state (struct path * pp, struct config *conf, int daemon, int oldstate)
 }
 
 static int
-get_prio (struct path * pp, int timeout)
+get_prio (struct path * pp)
 {
 	struct prio * p;
 	struct config *conf;
@@ -1815,7 +2041,7 @@ get_prio (struct path * pp, int timeout)
 		}
 	}
 	old_prio = pp->priority;
-	pp->priority = prio_getprio(p, pp, timeout);
+	pp->priority = prio_getprio(p, pp);
 	if (pp->priority < 0) {
 		/* this changes pp->offline, but why not */
 		int state = path_offline(pp);
@@ -1913,13 +2139,13 @@ fix_broken_nvme_wwid(struct path *pp, const char *value, size_t size)
 }
 
 static int
-get_udev_uid(struct path * pp, char *uid_attribute, struct udev_device *udev)
+get_udev_uid(struct path * pp, const char *uid_attribute, struct udev_device *udev)
 {
 	ssize_t len;
 	const char *value;
 
 	value = udev_device_get_property_value(udev, uid_attribute);
-	if (!value || strlen(value) == 0)
+	if ((!value || strlen(value) == 0) && pp->can_use_env_uid)
 		value = getenv(uid_attribute);
 	if (value && strlen(value)) {
 		len = strlcpy(pp->wwid, value, WWID_SIZE);
@@ -1956,12 +2182,44 @@ get_vpd_uid(struct path * pp)
 	return get_vpd_sysfs(parent, 0x83, pp->wwid, WWID_SIZE);
 }
 
+/* based on code from s390-tools/dasdinfo/dasdinfo.c */
+static ssize_t dasd_get_uid(struct path *pp)
+{
+	struct udev_device *parent;
+	char value[80];
+	char *p;
+	int i;
+
+	parent = udev_device_get_parent_with_subsystem_devtype(pp->udev, "ccw",
+							       NULL);
+	if (!parent)
+		return -1;
+
+	if (sysfs_attr_get_value(parent, "uid", value, 80) < 0)
+		return -1;
+
+	p = value - 1;
+	/* look for the 4th '.' and cut there */
+	for (i = 0; i < 4; i++) {
+		p = index(p + 1, '.');
+		if (!p)
+			break;
+	}
+	if (p)
+		*p = '\0';
+
+	return strlcpy(pp->wwid, value, WWID_SIZE);
+}
+
 static ssize_t uid_fallback(struct path *pp, int path_state,
 			    const char **origin)
 {
 	ssize_t len = -1;
 
-	if (pp->bus == SYSFS_BUS_SCSI) {
+	if (pp->bus == SYSFS_BUS_CCW) {
+		len = dasd_get_uid(pp);
+		*origin = "sysfs";
+	} else if (pp->bus == SYSFS_BUS_SCSI) {
 		len = get_vpd_uid(pp);
 		*origin = "sysfs";
 		if (len < 0 && path_state == PATH_UP) {
@@ -1978,7 +2236,7 @@ static ssize_t uid_fallback(struct path *pp, int path_state,
 			return -1;
 		len = sysfs_attr_get_value(pp->udev, "wwid", value,
 					   sizeof(value));
-		if (len <= 0)
+		if (!sysfs_attr_value_ok(len, sizeof(value)))
 			return -1;
 		len = strlcpy(pp->wwid, value, WWID_SIZE);
 		if (len >= WWID_SIZE) {
@@ -1994,7 +2252,7 @@ static ssize_t uid_fallback(struct path *pp, int path_state,
 	return len;
 }
 
-static bool has_uid_fallback(struct path *pp)
+bool has_uid_fallback(struct path *pp)
 {
 	/*
 	 * Falling back to direct WWID determination is dangerous
@@ -2009,6 +2267,9 @@ static bool has_uid_fallback(struct path *pp)
 		  !strcmp(pp->uid_attribute, ""))) ||
 		(pp->bus == SYSFS_BUS_NVME &&
 		 (!strcmp(pp->uid_attribute, DEFAULT_NVME_UID_ATTRIBUTE) ||
+		  !strcmp(pp->uid_attribute, ""))) ||
+		(pp->bus == SYSFS_BUS_CCW &&
+		 (!strcmp(pp->uid_attribute, DEFAULT_DASD_UID_ATTRIBUTE) ||
 		  !strcmp(pp->uid_attribute, ""))));
 }
 
@@ -2016,50 +2277,37 @@ int
 get_uid (struct path * pp, int path_state, struct udev_device *udev,
 	 int allow_fallback)
 {
-	char *c;
 	const char *origin = "unknown";
 	ssize_t len = 0;
 	struct config *conf;
 	int used_fallback = 0;
+	size_t i;
 
-	if (!pp->uid_attribute && !pp->getuid) {
+	if (!pp->uid_attribute) {
 		conf = get_multipath_config();
 		pthread_cleanup_push(put_multipath_config, conf);
 		select_getuid(conf, pp);
+		select_recheck_wwid(conf, pp);
 		pthread_cleanup_pop(1);
 	}
 
 	memset(pp->wwid, 0, WWID_SIZE);
-	if (pp->getuid) {
-		char buff[CALLOUT_MAX_SIZE];
+	if (pp->uid_attribute) {
+		/* if the uid_attribute is an empty string skip udev checking */
+		bool check_uid_attr = udev && *pp->uid_attribute;
 
-		/* Use 'getuid' callout, deprecated */
-		condlog(1, "%s: using deprecated getuid callout", pp->dev);
-		if (path_state != PATH_UP) {
-			condlog(3, "%s: path inaccessible", pp->dev);
-			len = -EWOULDBLOCK;
-		} else if (apply_format(pp->getuid, &buff[0], pp)) {
-			condlog(0, "error formatting uid callout command");
-			len = -EINVAL;
-		} else if (execute_program(buff, pp->wwid, WWID_SIZE)) {
-			condlog(3, "error calling out %s", buff);
-			len = -EIO;
-		} else
-			len = strlen(pp->wwid);
-		origin = "callout";
-	} else {
-		bool udev_available = udev && pp->uid_attribute
-			&& *pp->uid_attribute;
-
-		if (udev_available) {
+		if (check_uid_attr) {
 			len = get_udev_uid(pp, pp->uid_attribute, udev);
 			origin = "udev";
 			if (len == 0)
 				condlog(1, "%s: empty udev uid", pp->dev);
 		}
-		if ((!udev_available || (len <= 0 && allow_fallback))
+		if ((!check_uid_attr || (len <= 0 && allow_fallback))
 		    && has_uid_fallback(pp)) {
-			used_fallback = 1;
+			/* if udev wasn't set or we failed in get_udev_uid()
+			 * log at a higher priority */
+			if (!udev || check_uid_attr)
+				used_fallback = 1;
 			len = uid_fallback(pp, path_state, &origin);
 		}
 	}
@@ -2070,12 +2318,9 @@ get_uid (struct path * pp, int path_state, struct udev_device *udev,
 		return 1;
 	} else {
 		/* Strip any trailing blanks */
-		c = strchr(pp->wwid, '\0');
-		c--;
-		while (c && c >= pp->wwid && *c == ' ') {
-			*c = '\0';
-			c--;
-		}
+		for (i = strlen(pp->wwid); i > 0 && pp->wwid[i-1] == ' '; i--);
+			/* no-op */
+		pp->wwid[i] = '\0';
 	}
 	condlog((used_fallback)? 1 : 3, "%s: uid = %s (%s)", pp->dev,
 		*pp->wwid == '\0' ? "<empty>" : pp->wwid, origin);
@@ -2107,9 +2352,17 @@ int pathinfo(struct path *pp, struct config *conf, int mask)
 			condlog(4, "%s: hidden", pp->dev);
 			return PATHINFO_SKIPPED;
 		}
-		if (is_claimed_by_foreign(pp->udev) ||
-		    filter_property(conf, pp->udev, 4, pp->uid_attribute) > 0)
+
+		if (is_claimed_by_foreign(pp->udev))
 			return PATHINFO_SKIPPED;
+
+		/*
+		 * uid_attribute is required for filter_property below,
+		 * and needs access to pp->hwe.
+		 */
+		if (!(mask & DI_SYSFS) && (mask & DI_BLACKLIST) &&
+		    !pp->uid_attribute && VECTOR_SIZE(pp->hwe) == 0)
+			mask |= DI_SYSFS;
 	}
 
 	if (strlen(pp->dev) != 0 && filter_devnode(conf->blist_devnode,
@@ -2148,7 +2401,14 @@ int pathinfo(struct path *pp, struct config *conf, int mask)
 	}
 
 	if (mask & DI_BLACKLIST && mask & DI_SYSFS) {
-		if (filter_device(conf->blist_device, conf->elist_device,
+		/* uid_attribute is required for filter_property() */
+		if (pp->udev && !pp->uid_attribute) {
+			select_getuid(conf, pp);
+			select_recheck_wwid(conf, pp);
+		}
+
+		if (filter_property(conf, pp->udev, 4, pp->uid_attribute) > 0 ||
+		    filter_device(conf->blist_device, conf->elist_device,
 				  pp->vendor_id, pp->product_id, pp->dev) > 0 ||
 		    filter_protocol(conf->blist_protocol, conf->elist_protocol,
 				    pp) > 0)
@@ -2164,7 +2424,10 @@ int pathinfo(struct path *pp, struct config *conf, int mask)
 			 * Avoid any IO on the device itself.
 			 * simply use the path_offline() return as its state
 			 */
-			pp->chkrstate = pp->state = path_state;
+			if (path_state != PATH_PENDING ||
+			    pp->state == PATH_UNCHECKED ||
+			    pp->state == PATH_WILD)
+				pp->chkrstate = pp->state = path_state;
 		return PATHINFO_OK;
 	}
 
@@ -2210,14 +2473,31 @@ int pathinfo(struct path *pp, struct config *conf, int mask)
 	}
 
 	if ((mask & DI_WWID) && !strlen(pp->wwid)) {
-		get_uid(pp, path_state, pp->udev,
-			(pp->retriggers >= conf->retrigger_tries));
+		int allow_fallback = ((mask & DI_NOFALLBACK) == 0 &&
+				      pp->retriggers >= conf->retrigger_tries);
+		get_uid(pp, path_state, pp->udev, allow_fallback);
 		if (!strlen(pp->wwid)) {
 			if (pp->bus == SYSFS_BUS_UNDEF)
 				return PATHINFO_SKIPPED;
 			if (pp->initialized != INIT_FAILED) {
 				pp->initialized = INIT_MISSING_UDEV;
 				pp->tick = conf->retrigger_delay;
+			} else if (allow_fallback &&
+				   (pp->state == PATH_UP || pp->state == PATH_GHOST)) {
+				/*
+				 * We have failed to read udev info for this path
+				 * repeatedly. We used the fallback in get_uid()
+				 * if there was any, and still got no WWID,
+				 * although the path is allegedly up.
+				 * It's likely that this path is not fit for
+				 * multipath use.
+				 */
+				STRBUF_ON_STACK(buf);
+
+				snprint_path(&buf, "%T", pp, 0);
+				condlog(1, "%s: no WWID in state \"%s\", giving up",
+					pp->dev, get_strbuf_str(&buf));
+				return PATHINFO_SKIPPED;
 			}
 			return PATHINFO_OK;
 		}
@@ -2239,8 +2519,7 @@ int pathinfo(struct path *pp, struct config *conf, int mask)
 	  */
 	if ((mask & DI_PRIO) && path_state == PATH_UP && strlen(pp->wwid)) {
 		if (pp->state != PATH_DOWN || pp->priority == PRIO_UNDEF) {
-			get_prio(pp, (pp->state != PATH_DOWN)?
-				     (conf->checker_timeout * 1000) : 10);
+			get_prio(pp);
 		}
 	}
 

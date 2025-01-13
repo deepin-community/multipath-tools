@@ -1,0 +1,2 @@
+debian/initramfs/hooks usr/share/initramfs-tools/
+debian/initramfs/scripts usr/share/initramfs-tools/

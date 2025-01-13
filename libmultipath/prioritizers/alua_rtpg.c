@@ -27,8 +27,7 @@
 #include "../structs.h"
 #include "../prio.h"
 #include "../discovery.h"
-#include "../unaligned.h"
-#include "../debug.h"
+#include "debug.h"
 #include "alua_rtpg.h"
 
 #define SENSE_BUFF_LEN  32
@@ -137,7 +136,7 @@ scsi_error(struct sg_io_hdr *hdr, int opcode)
  */
 static int
 do_inquiry_sg(int fd, int evpd, unsigned int codepage,
-	      void *resp, int resplen, unsigned int timeout)
+	      void *resp, int resplen, unsigned int timeout_ms)
 {
 	struct inquiry_command	cmd;
 	struct sg_io_hdr	hdr;
@@ -163,7 +162,7 @@ retry:
 	hdr.dxfer_len		= resplen;
 	hdr.sbp			= sense;
 	hdr.mx_sb_len		= sizeof(sense);
-	hdr.timeout		= get_prio_timeout(timeout, SGIO_TIMEOUT);
+	hdr.timeout		= timeout_ms;
 
 	if (ioctl(fd, SG_IO, &hdr) < 0) {
 		PRINT_DEBUG("do_inquiry: IOCTL failed!");
@@ -186,7 +185,7 @@ retry:
 }
 
 int do_inquiry(const struct path *pp, int evpd, unsigned int codepage,
-	       void *resp, int resplen, unsigned int timeout)
+	       void *resp, int resplen)
 {
 	struct udev_device *ud = NULL;
 
@@ -207,7 +206,8 @@ int do_inquiry(const struct path *pp, int evpd, unsigned int codepage,
 			return 0;
 		}
 	}
-	return do_inquiry_sg(pp->fd, evpd, codepage, resp, resplen, timeout);
+	return do_inquiry_sg(pp->fd, evpd, codepage, resp, resplen,
+			     get_prio_timeout_ms(pp));
 }
 
 /*
@@ -215,13 +215,13 @@ int do_inquiry(const struct path *pp, int evpd, unsigned int codepage,
  * data returned by the standard inquiry command.
  */
 int
-get_target_port_group_support(const struct path *pp, unsigned int timeout)
+get_target_port_group_support(const struct path *pp)
 {
 	struct inquiry_data	inq;
 	int			rc;
 
 	memset((unsigned char *)&inq, 0, sizeof(inq));
-	rc = do_inquiry(pp, 0, 0x00, &inq, sizeof(inq), timeout);
+	rc = do_inquiry(pp, 0, 0x00, &inq, sizeof(inq));
 	if (!rc) {
 		rc = inquiry_data_get_tpgs(&inq);
 	}
@@ -229,35 +229,16 @@ get_target_port_group_support(const struct path *pp, unsigned int timeout)
 	return rc;
 }
 
-static int
-get_sysfs_pg83(const struct path *pp, unsigned char *buff, int buflen)
-{
-	struct udev_device *parent = pp->udev;
-
-	while (parent) {
-		const char *subsys = udev_device_get_subsystem(parent);
-		if (subsys && !strncmp(subsys, "scsi", 4))
-			break;
-		parent = udev_device_get_parent(parent);
-	}
-
-	if (!parent || sysfs_get_vpd(parent, 0x83, buff, buflen) <= 0) {
-		PRINT_DEBUG("failed to read sysfs vpd pg83");
-		return -1;
-	}
-	return 0;
-}
-
 int
-get_target_port_group(const struct path * pp, unsigned int timeout)
+get_target_port_group(const struct path * pp)
 {
 	unsigned char		*buf;
-	struct vpd83_data *	vpd83;
-	struct vpd83_dscr *	dscr;
+	const struct vpd83_data *	vpd83;
+	const struct vpd83_dscr *	dscr;
 	int			rc;
 	int			buflen, scsi_buflen;
 
-	buflen = 4096;
+	buflen = VPD_BUFLEN;
 	buf = (unsigned char *)malloc(buflen);
 	if (!buf) {
 		PRINT_DEBUG("malloc failed: could not allocate"
@@ -266,45 +247,39 @@ get_target_port_group(const struct path * pp, unsigned int timeout)
 	}
 
 	memset(buf, 0, buflen);
+	rc = do_inquiry(pp, 1, 0x83, buf, buflen);
+	if (rc < 0)
+		goto out;
 
-	rc = get_sysfs_pg83(pp, buf, buflen);
-
-	if (rc < 0) {
-		rc = do_inquiry(pp, 1, 0x83, buf, buflen, timeout);
+	scsi_buflen = get_unaligned_be16(&buf[2]) + 4;
+	if (scsi_buflen >= USHRT_MAX)
+		scsi_buflen = USHRT_MAX;
+	if (buflen < scsi_buflen) {
+		free(buf);
+		buf = (unsigned char *)malloc(scsi_buflen);
+		if (!buf) {
+			PRINT_DEBUG("malloc failed: could not allocate"
+				    "%u bytes", scsi_buflen);
+			return -RTPG_RTPG_FAILED;
+		}
+		buflen = scsi_buflen;
+		memset(buf, 0, buflen);
+		rc = do_inquiry(pp, 1, 0x83, buf, buflen);
 		if (rc < 0)
 			goto out;
-
-		scsi_buflen = get_unaligned_be16(&buf[2]) + 4;
-		/* Paranoia */
-		if (scsi_buflen >= USHRT_MAX)
-			scsi_buflen = USHRT_MAX;
-		if (buflen < scsi_buflen) {
-			free(buf);
-			buf = (unsigned char *)malloc(scsi_buflen);
-			if (!buf) {
-				PRINT_DEBUG("malloc failed: could not allocate"
-					    "%u bytes", scsi_buflen);
-				return -RTPG_RTPG_FAILED;
-			}
-			buflen = scsi_buflen;
-			memset(buf, 0, buflen);
-			rc = do_inquiry(pp, 1, 0x83, buf, buflen, timeout);
-			if (rc < 0)
-				goto out;
-		}
 	}
 
 	vpd83 = (struct vpd83_data *) buf;
 	rc = -RTPG_NO_TPG_IDENTIFIER;
 	FOR_EACH_VPD83_DSCR(vpd83, dscr) {
 		if (vpd83_dscr_istype(dscr, IDTYPE_TARGET_PORT_GROUP)) {
-			struct vpd83_tpg_dscr *p;
+			const struct vpd83_tpg_dscr *p;
 			if (rc != -RTPG_NO_TPG_IDENTIFIER) {
 				PRINT_DEBUG("get_target_port_group: more "
 					    "than one TPG identifier found!");
 				continue;
 			}
-			p  = (struct vpd83_tpg_dscr *)dscr->data;
+			p  = (const struct vpd83_tpg_dscr *)dscr->data;
 			rc = get_unaligned_be16(p->tpg);
 		}
 	}
@@ -319,7 +294,7 @@ out:
 }
 
 int
-do_rtpg(int fd, void* resp, long resplen, unsigned int timeout)
+do_rtpg(int fd, void* resp, long resplen, unsigned int timeout_ms)
 {
 	struct rtpg_command	cmd;
 	struct sg_io_hdr	hdr;
@@ -342,7 +317,7 @@ retry:
 	hdr.dxfer_len		= resplen;
 	hdr.mx_sb_len		= sizeof(sense);
 	hdr.sbp			= sense;
-	hdr.timeout		= get_prio_timeout(timeout, SGIO_TIMEOUT);
+	hdr.timeout		= timeout_ms;
 
 	if (ioctl(fd, SG_IO, &hdr) < 0) {
 		condlog(2, "%s: sg ioctl failed: %s",
@@ -366,8 +341,7 @@ retry:
 }
 
 int
-get_asymmetric_access_state(const struct path *pp, unsigned int tpg,
-			    unsigned int timeout)
+get_asymmetric_access_state(const struct path *pp, unsigned int tpg)
 {
 	unsigned char		*buf;
 	struct rtpg_data *	tpgd;
@@ -375,9 +349,10 @@ get_asymmetric_access_state(const struct path *pp, unsigned int tpg,
 	int			rc;
 	unsigned int		buflen;
 	uint64_t		scsi_buflen;
+	unsigned int		timeout_ms = get_prio_timeout_ms(pp);
 	int fd = pp->fd;
 
-	buflen = 4096;
+	buflen = VPD_BUFLEN;
 	buf = (unsigned char *)malloc(buflen);
 	if (!buf) {
 		PRINT_DEBUG ("malloc failed: could not allocate"
@@ -385,7 +360,7 @@ get_asymmetric_access_state(const struct path *pp, unsigned int tpg,
 		return -RTPG_RTPG_FAILED;
 	}
 	memset(buf, 0, buflen);
-	rc = do_rtpg(fd, buf, buflen, timeout);
+	rc = do_rtpg(fd, buf, buflen, timeout_ms);
 	if (rc < 0) {
 		PRINT_DEBUG("%s: do_rtpg returned %d", __func__, rc);
 		goto out;
@@ -403,7 +378,7 @@ get_asymmetric_access_state(const struct path *pp, unsigned int tpg,
 		}
 		buflen = scsi_buflen;
 		memset(buf, 0, buflen);
-		rc = do_rtpg(fd, buf, buflen, timeout);
+		rc = do_rtpg(fd, buf, buflen, timeout_ms);
 		if (rc < 0)
 			goto out;
 	}
