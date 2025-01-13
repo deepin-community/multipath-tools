@@ -6,9 +6,9 @@
 #include <unistd.h>
 #include <libdevmapper.h>
 #include <libudev.h>
+#include <ctype.h>
 
 #include "checkers.h"
-#include "memory.h"
 #include "vector.h"
 #include "util.h"
 #include "structs.h"
@@ -19,20 +19,45 @@
 #include "prio.h"
 #include "prioritizers/alua_spc3.h"
 #include "dm-generic.h"
+#include "devmapper.h"
+
+const char * const protocol_name[LAST_BUS_PROTOCOL_ID + 1] = {
+	[SYSFS_BUS_UNDEF] = "undef",
+	[SYSFS_BUS_CCW] = "ccw",
+	[SYSFS_BUS_CCISS] = "cciss",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_FCP] = "scsi:fcp",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_SPI] = "scsi:spi",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_SSA] = "scsi:ssa",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_SBP] = "scsi:sbp",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_SRP] = "scsi:srp",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_ISCSI] = "scsi:iscsi",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_SAS] = "scsi:sas",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_ADT] = "scsi:adt",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_ATA] = "scsi:ata",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_USB] = "scsi:usb",
+	[SYSFS_BUS_SCSI + SCSI_PROTOCOL_UNSPEC] = "scsi:unspec",
+	[SYSFS_BUS_NVME + NVME_PROTOCOL_PCIE] = "nvme:pcie",
+	[SYSFS_BUS_NVME + NVME_PROTOCOL_RDMA] = "nvme:rdma",
+	[SYSFS_BUS_NVME + NVME_PROTOCOL_FC] = "nvme:fc",
+	[SYSFS_BUS_NVME + NVME_PROTOCOL_TCP] = "nvme:tcp",
+	[SYSFS_BUS_NVME + NVME_PROTOCOL_LOOP] = "nvme:loop",
+	[SYSFS_BUS_NVME + NVME_PROTOCOL_APPLE_NVME] = "nvme:apple-nvme",
+	[SYSFS_BUS_NVME + NVME_PROTOCOL_UNSPEC] = "nvme:unspec",
+};
 
 struct adapter_group *
 alloc_adaptergroup(void)
 {
 	struct adapter_group *agp;
 
-	agp = (struct adapter_group *)MALLOC(sizeof(struct adapter_group));
+	agp = (struct adapter_group *)calloc(1, sizeof(struct adapter_group));
 
 	if (!agp)
 		return NULL;
 
 	agp->host_groups = vector_alloc();
 	if (!agp->host_groups) {
-		FREE(agp);
+		free(agp);
 		agp = NULL;
 	}
 	return agp;
@@ -45,7 +70,7 @@ void free_adaptergroup(vector adapters)
 
 	vector_foreach_slot(adapters, agp, i) {
 		free_hostgroup(agp->host_groups);
-		FREE(agp);
+		free(agp);
 	}
 	vector_free(adapters);
 }
@@ -60,7 +85,7 @@ void free_hostgroup(vector hostgroups)
 
 	vector_foreach_slot(hostgroups, hgp, i) {
 		vector_free(hgp->paths);
-		FREE(hgp);
+		free(hgp);
 	}
 	vector_free(hostgroups);
 }
@@ -70,7 +95,7 @@ alloc_hostgroup(void)
 {
 	struct host_group *hgp;
 
-	hgp = (struct host_group *)MALLOC(sizeof(struct host_group));
+	hgp = (struct host_group *)calloc(1, sizeof(struct host_group));
 
 	if (!hgp)
 		return NULL;
@@ -78,7 +103,7 @@ alloc_hostgroup(void)
 	hgp->paths = vector_alloc();
 
 	if (!hgp->paths) {
-		FREE(hgp);
+		free(hgp);
 		hgp = NULL;
 	}
 	return hgp;
@@ -89,17 +114,18 @@ alloc_path (void)
 {
 	struct path * pp;
 
-	pp = (struct path *)MALLOC(sizeof(struct path));
+	pp = (struct path *)calloc(1, sizeof(struct path));
 
 	if (pp) {
 		pp->initialized = INIT_NEW;
 		pp->sg_id.host_no = -1;
 		pp->sg_id.channel = -1;
 		pp->sg_id.scsi_id = -1;
-		pp->sg_id.lun = -1;
-		pp->sg_id.proto_id = SCSI_PROTOCOL_UNSPEC;
+		pp->sg_id.lun = SCSI_INVALID_LUN;
+		pp->sg_id.proto_id = PROTOCOL_UNSET;
 		pp->fd = -1;
 		pp->tpgs = TPGS_UNDEF;
+		pp->tpg_id = GROUP_ID_UNDEF;
 		pp->priority = PRIO_UNDEF;
 		pp->checkint = CHECKINT_UNDEF;
 		checker_clear(&pp->checker);
@@ -121,7 +147,7 @@ uninitialize_path(struct path *pp)
 
 	pp->dmstate = PSTATE_UNDEF;
 	pp->uid_attribute = NULL;
-	pp->getuid = NULL;
+	pp->checker_timeout = 0;
 
 	if (checker_selected(&pp->checker))
 		checker_put(&pp->checker);
@@ -152,7 +178,7 @@ free_path (struct path * pp)
 
 	vector_free(pp->hwe);
 
-	FREE(pp);
+	free(pp);
 }
 
 void
@@ -176,7 +202,7 @@ alloc_pathgroup (void)
 {
 	struct pathgroup * pgp;
 
-	pgp = (struct pathgroup *)MALLOC(sizeof(struct pathgroup));
+	pgp = (struct pathgroup *)calloc(1, sizeof(struct pathgroup));
 
 	if (!pgp)
 		return NULL;
@@ -184,7 +210,7 @@ alloc_pathgroup (void)
 	pgp->paths = vector_alloc();
 
 	if (!pgp->paths) {
-		FREE(pgp);
+		free(pgp);
 		return NULL;
 	}
 
@@ -199,7 +225,7 @@ free_pathgroup (struct pathgroup * pgp, enum free_path_mode free_paths)
 		return;
 
 	free_pathvec(pgp->paths, free_paths);
-	FREE(pgp);
+	free(pgp);
 }
 
 void
@@ -222,16 +248,26 @@ alloc_multipath (void)
 {
 	struct multipath * mpp;
 
-	mpp = (struct multipath *)MALLOC(sizeof(struct multipath));
+	mpp = (struct multipath *)calloc(1, sizeof(struct multipath));
 
 	if (mpp) {
 		mpp->bestpg = 1;
 		mpp->mpcontext = NULL;
 		mpp->no_path_retry = NO_PATH_RETRY_UNDEF;
-		mpp->fast_io_fail = MP_FAST_IO_FAIL_UNSET;
 		dm_multipath_to_gen(mpp)->ops = &dm_gen_multipath_ops;
 	}
 	return mpp;
+}
+
+void *set_mpp_hwe(struct multipath *mpp, const struct path *pp)
+{
+	if (!mpp || !pp || !pp->hwe)
+		return NULL;
+	if (mpp->hwe)
+		return mpp->hwe;
+	mpp->hwe = vector_convert(NULL, pp->hwe,
+				  struct hwentry, identity);
+	return mpp->hwe;
 }
 
 void free_multipath_attributes(struct multipath *mpp)
@@ -240,17 +276,17 @@ void free_multipath_attributes(struct multipath *mpp)
 		return;
 
 	if (mpp->selector) {
-		FREE(mpp->selector);
+		free(mpp->selector);
 		mpp->selector = NULL;
 	}
 
 	if (mpp->features) {
-		FREE(mpp->features);
+		free(mpp->features);
 		mpp->features = NULL;
 	}
 
 	if (mpp->hwhandler) {
-		FREE(mpp->hwhandler);
+		free(mpp->hwhandler);
 		mpp->hwhandler = NULL;
 	}
 }
@@ -264,13 +300,8 @@ free_multipath (struct multipath * mpp, enum free_path_mode free_paths)
 	free_multipath_attributes(mpp);
 
 	if (mpp->alias) {
-		FREE(mpp->alias);
+		free(mpp->alias);
 		mpp->alias = NULL;
-	}
-
-	if (mpp->dmi) {
-		FREE(mpp->dmi);
-		mpp->dmi = NULL;
 	}
 
 	if (!free_paths && mpp->pg) {
@@ -290,8 +321,12 @@ free_multipath (struct multipath * mpp, enum free_path_mode free_paths)
 
 	free_pathvec(mpp->paths, free_paths);
 	free_pgvec(mpp->pg, free_paths);
-	FREE_PTR(mpp->mpcontext);
-	FREE(mpp);
+	if (mpp->hwe) {
+		vector_free(mpp->hwe);
+		mpp->hwe = NULL;
+	}
+	free(mpp->mpcontext);
+	free(mpp);
 }
 
 void
@@ -393,10 +428,10 @@ find_mp_by_minor (const struct _vector *mpvec, unsigned int minor)
 		return NULL;
 
 	vector_foreach_slot (mpvec, mpp, i) {
-		if (!mpp->dmi)
+		if (!has_dm_info(mpp))
 			continue;
 
-		if (mpp->dmi->minor == minor)
+		if (mpp->dmi.minor == minor)
 			return mpp;
 	}
 	return NULL;
@@ -408,7 +443,7 @@ find_mp_by_wwid (const struct _vector *mpvec, const char * wwid)
 	int i;
 	struct multipath * mpp;
 
-	if (!mpvec)
+	if (!mpvec || strlen(wwid) >= WWID_SIZE)
 		return NULL;
 
 	vector_foreach_slot (mpvec, mpp, i)
@@ -445,20 +480,28 @@ struct multipath *
 find_mp_by_str (const struct _vector *mpvec, const char * str)
 {
 	int minor;
+	char dummy;
+	struct multipath *mpp = NULL;
 
-	if (sscanf(str, "dm-%d", &minor) == 1)
-		return find_mp_by_minor(mpvec, minor);
-	else
-		return find_mp_by_alias(mpvec, str);
+	if (sscanf(str, "dm-%d%c", &minor, &dummy) == 1)
+		mpp = find_mp_by_minor(mpvec, minor);
+	if (!mpp)
+		mpp = find_mp_by_alias(mpvec, str);
+	if (!mpp)
+		mpp = find_mp_by_wwid(mpvec, str);
+
+	if (!mpp)
+		condlog(2, "%s: invalid map name.", str);
+	return mpp;
 }
 
 struct path *
-find_path_by_dev (const struct _vector *pathvec, const char * dev)
+find_path_by_dev (const struct _vector *pathvec, const char *dev)
 {
 	int i;
 	struct path * pp;
 
-	if (!pathvec)
+	if (!pathvec || !dev)
 		return NULL;
 
 	vector_foreach_slot (pathvec, pp, i)
@@ -483,6 +526,25 @@ find_path_by_devt (const struct _vector *pathvec, const char * dev_t)
 			return pp;
 
 	condlog(4, "%s: dev_t not found in pathvec", dev_t);
+	return NULL;
+}
+
+struct path *mp_find_path_by_devt(const struct multipath *mpp, const char *devt)
+{
+	struct path *pp;
+	struct pathgroup *pgp;
+	unsigned int i, j;
+
+	pp = find_path_by_devt(mpp->paths, devt);
+	if (pp)
+		return pp;
+
+	vector_foreach_slot (mpp->pg, pgp, i){
+		vector_foreach_slot (pgp->paths, pp, j){
+			if (!strcmp(pp->dev_t, devt))
+				return pp;
+		}
+	}
 	return NULL;
 }
 
@@ -571,175 +633,166 @@ first_path (const struct multipath * mpp)
 	return pgp?VECTOR_SLOT(pgp->paths, 0):NULL;
 }
 
-int add_feature(char **f, const char *n)
+int add_feature(char **features_p, const char *new_feat)
 {
-	int c = 0, d, l;
-	char *e, *t;
+	int count = 0, new_count, len;
+	char *tmp, *feats;
+	const char *ptr;
 
-	if (!f)
+	if (!features_p)
 		return 1;
 
 	/* Nothing to do */
-	if (!n || *n == '0')
+	if (!new_feat || *new_feat == '\0')
 		return 0;
 
-	if (strchr(n, ' ') != NULL) {
-		condlog(0, "internal error: feature \"%s\" contains spaces", n);
+	len = strlen(new_feat);
+	if (isspace(*new_feat) || isspace(*(new_feat + len - 1))) {
+		condlog(0, "internal error: feature \"%s\" has leading or trailing spaces",
+			new_feat);
 		return 1;
 	}
 
+	ptr = new_feat;
+	new_count = 1;
+	while (*ptr != '\0') {
+		if (isspace(*ptr) && !isspace(*(ptr + 1)) && *(ptr + 1) != '\0')
+			new_count++;
+		ptr++;
+	}
+
 	/* default feature is null */
-	if(!*f)
+	if(!*features_p)
 	{
-		l = asprintf(&t, "1 %s", n);
-		if(l == -1)
+		len = asprintf(&feats, "%0d %s", new_count, new_feat);
+		if(len == -1)
 			return 1;
 
-		*f = t;
+		*features_p = feats;
 		return 0;
 	}
 
 	/* Check if feature is already present */
-	if (strstr(*f, n))
-		return 0;
-
-	/* Get feature count */
-	c = strtoul(*f, &e, 10);
-	if (*f == e || (*e != ' ' && *e != '\0')) {
-		condlog(0, "parse error in feature string \"%s\"", *f);
-		return 1;
+	tmp = *features_p;
+	while ((tmp = strstr(tmp, new_feat)) != NULL) {
+		if (isspace(*(tmp - 1)) &&
+		    (isspace(*(tmp + len)) || *(tmp + len) == '\0'))
+			return 0;
+		tmp += len;
 	}
 
-	/* Add 1 digit and 1 space */
-	l = strlen(e) + strlen(n) + 2;
-
-	c++;
-	/* Check if we need more digits for feature count */
-	for (d = c; d >= 10; d /= 10)
-		l++;
-
-	t = MALLOC(l + 1);
-	if (!t)
+	/* Get feature count */
+	count = strtoul(*features_p, &tmp, 10);
+	if (*features_p == tmp || (!isspace(*tmp) && *tmp != '\0')) {
+		condlog(0, "parse error in feature string \"%s\"", *features_p);
+		return 1;
+	}
+	count += new_count;
+	if (asprintf(&feats, "%0d%s %s", count, tmp, new_feat) < 0)
 		return 1;
 
-	/* e: old feature string with leading space, or "" */
-	if (*e == ' ')
-		while (*(e + 1) == ' ')
-			e++;
-
-	snprintf(t, l + 1, "%0d%s %s", c, e, n);
-
-	FREE(*f);
-	*f = t;
+	free(*features_p);
+	*features_p = feats;
 
 	return 0;
 }
 
-int remove_feature(char **f, const char *o)
+int remove_feature(char **features_p, const char *old_feat)
 {
-	int c = 0, d, l;
-	char *e, *p, *n;
-	const char *q;
+	int count = 0, len;
+	char *feats_start, *ptr, *new;
 
-	if (!f || !*f)
+	if (!features_p || !*features_p)
 		return 1;
 
 	/* Nothing to do */
-	if (!o || *o == '\0')
+	if (!old_feat || *old_feat == '\0')
 		return 0;
 
-	/* Check if not present */
-	if (!strstr(*f, o))
+	len = strlen(old_feat);
+	if (isspace(*old_feat) || isspace(*(old_feat + len - 1))) {
+		condlog(0, "internal error: feature \"%s\" has leading or trailing spaces",
+			old_feat);
+		return 1;
+	}
+
+	/* Check if present and not part of a larger feature token*/
+	ptr = *features_p + 1;
+	while ((ptr = strstr(ptr, old_feat)) != NULL) {
+		if (isspace(*(ptr - 1)) &&
+		    (isspace(*(ptr + len)) || *(ptr + len) == '\0'))
+			break;
+		ptr += len;
+	}
+	if (!ptr)
 		return 0;
 
 	/* Get feature count */
-	c = strtoul(*f, &e, 10);
-	if (*f == e)
-		/* parse error */
+	count = strtoul(*features_p, &feats_start, 10);
+	if (*features_p == feats_start || !isspace(*feats_start)) {
+		condlog(0, "parse error in feature string \"%s\"", *features_p);
 		return 1;
-
-	/* Normalize features */
-	while (*o == ' ') {
-		o++;
 	}
-	/* Just spaces, return */
-	if (*o == '\0')
-		return 0;
-	q = o + strlen(o);
-	while (*q == ' ')
-		q--;
-	d = (int)(q - o);
 
 	/* Update feature count */
-	c--;
-	q = o;
-	while (q[0] != '\0') {
-		if (q[0] == ' ' && q[1] != ' ' && q[1] != '\0')
-			c--;
-		q++;
+	count--;
+	while (*old_feat != '\0') {
+		if (isspace(*old_feat) && !isspace(*(old_feat + 1)) &&
+		    *(old_feat + 1) != '\0')
+			count--;
+		old_feat++;
 	}
 
 	/* Quick exit if all features have been removed */
-	if (c == 0) {
-		n = MALLOC(2);
-		if (!n)
+	if (count == 0) {
+		new = malloc(2);
+		if (!new)
 			return 1;
-		strcpy(n, "0");
+		strcpy(new, "0");
 		goto out;
 	}
 
-	/* Search feature to be removed */
-	e = strstr(*f, o);
-	if (!e)
-		/* Not found, return */
-		return 0;
-
 	/* Update feature count space */
-	l = strlen(*f) - d;
-	n =  MALLOC(l + 1);
-	if (!n)
+	new = malloc(strlen(*features_p) - len + 1);
+	if (!new)
 		return 1;
 
 	/* Copy the feature count */
-	sprintf(n, "%0d", c);
+	sprintf(new, "%0d", count);
 	/*
 	 * Copy existing features up to the feature
 	 * about to be removed
 	 */
-	p = strchr(*f, ' ');
-	if (!p) {
-		/* Internal error, feature string inconsistent */
-		FREE(n);
-		return 1;
-	}
-	while (*p == ' ')
-		p++;
-	p--;
-	if (e != p) {
-		do {
-			e--;
-			d++;
-		} while (*e == ' ');
-		e++; d--;
-		strncat(n, p, (size_t)(e - p));
-		p += (size_t)(e - p);
-	}
+	strncat(new, feats_start, (size_t)(ptr - feats_start));
 	/* Skip feature to be removed */
-	p += d;
-
+	ptr += len;
 	/* Copy remaining features */
-	if (strlen(p)) {
-		while (*p == ' ')
-			p++;
-		if (strlen(p)) {
-			p--;
-			strcat(n, p);
-		}
-	}
+	while (isspace(*ptr))
+		ptr++;
+	if (*ptr != '\0')
+		strcat(new, ptr);
+	else
+		strchop(new);
 
 out:
-	FREE(*f);
-	*f = n;
+	free(*features_p);
+	*features_p = new;
 
 	return 0;
+}
+
+unsigned int bus_protocol_id(const struct path *pp) {
+	if (!pp || pp->bus < 0 || pp->bus > SYSFS_BUS_NVME)
+		return SYSFS_BUS_UNDEF;
+	if (pp->bus != SYSFS_BUS_SCSI && pp->bus != SYSFS_BUS_NVME)
+		return pp->bus;
+	if (pp->sg_id.proto_id < 0)
+		return SYSFS_BUS_UNDEF;
+	if (pp->bus == SYSFS_BUS_SCSI &&
+	    pp->sg_id.proto_id > SCSI_PROTOCOL_UNSPEC)
+		return SYSFS_BUS_UNDEF;
+	if (pp->bus == SYSFS_BUS_NVME &&
+	    pp->sg_id.proto_id > NVME_PROTOCOL_UNSPEC)
+		return SYSFS_BUS_UNDEF;
+	return pp->bus + pp->sg_id.proto_id;
 }

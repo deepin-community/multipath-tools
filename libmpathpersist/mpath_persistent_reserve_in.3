@@ -1,11 +1,12 @@
 .\" ----------------------------------------------------------------------------
-.\" Update the date below if you make any significant change.
 .\" Make sure there are no errors with:
 .\" groff -z -wall -b -e -t libmpathpersist/mpath_persistent_reserve_in.3
+.\" man --warnings -E UTF-8 -l -Tutf8 -Z libmpathpersist/mpath_persistent_reserve_in.3 > /dev/null
 .\"
+.\" Update the date below if you make any significant change.
 .\" ----------------------------------------------------------------------------
 .
-.TH MPATH_PERSISTENT_RESERVE_IN 3 2016-11-01 "Linux"
+.TH MPATH_PERSISTENT_RESERVE_IN 3 2024-02-09 Linux
 .
 .
 .\" ----------------------------------------------------------------------------
@@ -48,7 +49,7 @@ The response from PRIN service action. The caller should manage the memory alloc
 Turn on debugging trace: Input argument. 0->Disable, 1->Enable.
 .TP
 .I verbose
-Set verbosity level. Input argument. value:[0-3]. 0->Crits and Errors, 1->Warnings, 2->Info, 3->Debug.
+Set verbosity level. Input argument. value:[0-3]. 0->Errors, 1->Warnings, 2->Info, 3->Debug.
 .RE
 .
 .

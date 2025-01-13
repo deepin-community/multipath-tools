@@ -1,47 +1,39 @@
 include ../Makefile.inc
 
-SONAME = 0
-DEVLIB = libmpathpersist.so
-LIBS = $(DEVLIB).$(SONAME)
+DEVLIB := libmpathpersist.so
+CFLAGS += $(LIB_CFLAGS) -I$(multipathdir) -I$(mpathutildir) -I$(mpathpersistdir) -I$(mpathcmddir)
+LDFLAGS += -L$(multipathdir) -L$(mpathutildir) -L$(mpathcmddir)
+LIBDEPS += -lmultipath -lmpathutil -lmpathcmd -ldevmapper -lpthread -ldl
 
-CFLAGS += $(LIB_CFLAGS) -I$(multipathdir) -I$(mpathpersistdir) -I$(mpathcmddir)
+OBJS := mpath_persist.o mpath_updatepr.o mpath_pr_ioctl.o mpath_persist_int.o
 
-LIBDEPS += -lpthread -ldevmapper -ldl -L$(multipathdir) -lmultipath \
-	   -L$(mpathcmddir) -lmpathcmd
+all: $(DEVLIB)
 
-OBJS = mpath_persist.o mpath_updatepr.o mpath_pr_ioctl.o
+include $(TOPDIR)/rules.mk
 
-all: $(LIBS)
-
-$(LIBS): $(OBJS)
-	$(CC) $(LDFLAGS) $(SHARED_FLAGS) $(LIBDEPS) -Wl,-soname=$@ -o $@ $(OBJS)
-	$(LN) $(LIBS) $(DEVLIB)
-	$(GZIP) mpath_persistent_reserve_in.3 > mpath_persistent_reserve_in.3.gz
-	$(GZIP) mpath_persistent_reserve_out.3 > mpath_persistent_reserve_out.3.gz
-
-install: $(LIBS)
-	$(INSTALL_PROGRAM) -d $(DESTDIR)$(syslibdir)
-	$(INSTALL_PROGRAM) -m 755 $(LIBS) $(DESTDIR)$(syslibdir)/$(LIBS)
-	$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(syslibdir)
-	$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(man3dir)
-	$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(includedir)
-	$(LN) $(LIBS) $(DESTDIR)$(syslibdir)/$(DEVLIB)
-	$(INSTALL_PROGRAM) -m 644 mpath_persistent_reserve_in.3.gz $(DESTDIR)$(man3dir)
-	$(INSTALL_PROGRAM) -m 644 mpath_persistent_reserve_out.3.gz $(DESTDIR)$(man3dir)
-	$(INSTALL_PROGRAM) -m 644 mpath_persist.h $(DESTDIR)$(includedir)
+install: all
+	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(syslibdir)
+	$(Q)$(INSTALL_PROGRAM) -m 755 $(LIBS) $(DESTDIR)$(syslibdir)/$(LIBS)
+	$(Q)$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(syslibdir)
+	$(Q)$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(mandir)/man3
+	$(Q)$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(includedir)
+	$(Q)$(LN) $(LIBS) $(DESTDIR)$(syslibdir)/$(DEVLIB)
+	$(Q)$(INSTALL_PROGRAM) -m 644 mpath_persistent_reserve_in.3 $(DESTDIR)$(mandir)/man3
+	$(Q)$(INSTALL_PROGRAM) -m 644 mpath_persistent_reserve_out.3 $(DESTDIR)$(mandir)/man3
+	$(Q)$(INSTALL_PROGRAM) -m 644 mpath_persist.h $(DESTDIR)$(includedir)
 
 uninstall:
-	$(RM) $(DESTDIR)$(syslibdir)/$(LIBS)
-	$(RM) $(DESTDIR)$(man3dir)/mpath_persistent_reserve_in.3.gz
-	$(RM) $(DESTDIR)$(man3dir)/mpath_persistent_reserve_out.3.gz
-	$(RM) $(DESTDIR)$(includedir)/mpath_persist.h
-	$(RM) $(DESTDIR)$(syslibdir)/$(DEVLIB)
+	$(Q)$(RM) $(DESTDIR)$(syslibdir)/$(LIBS)
+	$(Q)$(RM) $(DESTDIR)$(mandir)/man3/mpath_persistent_reserve_in.3
+	$(Q)$(RM) $(DESTDIR)$(mandir)/man3/mpath_persistent_reserve_out.3
+	$(Q)$(RM) $(DESTDIR)$(includedir)/mpath_persist.h
+	$(Q)$(RM) $(DESTDIR)$(syslibdir)/$(DEVLIB)
 
 clean: dep_clean
-	$(RM) core *.a *.o *.so *.so.* *.gz
+	$(Q)$(RM) core *.a *.o *.so *.so.* *.abi $(NV_VERSION_SCRIPT)
 
 include $(wildcard $(OBJS:.o=.d))
 
 
 dep_clean:
-	$(RM) $(OBJS:.o=.d)
+	$(Q)$(RM) $(OBJS:.o=.d)

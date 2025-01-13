@@ -1,9 +1,14 @@
 #
 # Copyright (C) 2007 Christophe Varoqui, <christophe.varoqui@opensvc.com>
 #
+TOPDIR=../..
+
 include ../../Makefile.inc
 
-CFLAGS += $(LIB_CFLAGS) -I..
+CPPFLAGS += -I$(multipathdir) -I$(mpathutildir)
+CFLAGS += $(LIB_CFLAGS)
+LDFLAGS += -L$(multipathdir) -L$(mpathutildir)
+LIBDEPS = -lmultipath -lmpathutil -lm -lpthread -lrt
 
 # If you add or remove a prioritizer also update multipath/multipath.conf.5
 LIBS = \
@@ -21,27 +26,24 @@ LIBS = \
 	libpriopath_latency.so \
 	libpriosysfs.so
 
-ifneq ($(call check_file,/usr/include/linux/nvme_ioctl.h),0)
+ifeq ($(ANA_SUPPORT),1)
 	LIBS += libprioana.so
-	CFLAGS += -I../nvme
+	CPPFLAGS += -I../nvme
 endif
 
 all: $(LIBS)
 
-libpriopath_latency.so: path_latency.o
-	$(CC) $(LDFLAGS) $(SHARED_FLAGS) -o $@ $^ -lm
-
 libprio%.so: %.o
-	$(CC) $(LDFLAGS) $(SHARED_FLAGS) -o $@ $^
+	$(Q)$(CC) $(LDFLAGS) $(SHARED_FLAGS) -o $@ $^ $(LIBDEPS)
 
 install: $(LIBS)
-	$(INSTALL_PROGRAM) -m 755 libprio*.so $(DESTDIR)$(libdir)
+	$(Q)$(INSTALL_PROGRAM) -m 755 libprio*.so $(DESTDIR)$(plugindir)
 
 uninstall:
-	for file in $(LIBS); do $(RM) $(DESTDIR)$(libdir)/$$file; done
+	$(Q)for file in $(LIBS); do $(RM) $(DESTDIR)$(plugindir)/$$file; done
 
 clean: dep_clean
-	$(RM) core *.a *.o *.gz *.so
+	$(Q)$(RM) core *.a *.o *.gz *.so
 
 OBJS = $(LIBS:libprio%.so=%.o) alua_rtpg.o
 .SECONDARY: $(OBJS)
@@ -49,4 +51,4 @@ OBJS = $(LIBS:libprio%.so=%.o) alua_rtpg.o
 include $(wildcard $(OBJS:.o=.d))
 
 dep_clean:
-	$(RM) $(OBJS:.o=.d)
+	$(Q)$(RM) $(OBJS:.o=.d)

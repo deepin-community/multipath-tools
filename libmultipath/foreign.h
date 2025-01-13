@@ -18,9 +18,9 @@
 #define _FOREIGN_H
 #include <stdbool.h>
 #include <libudev.h>
+#define LIBMP_FOREIGN_API ((1 << 8) | 2)
 
-#define LIBMP_FOREIGN_API ((1 << 8) | 0)
-
+struct strbuf;
 struct context;
 
 /* return codes of functions below returning "int" */
@@ -42,7 +42,7 @@ struct foreign {
 	/**
 	 * method: init(api, name)
 	 * Initialize foreign library, and check API compatibility
-	 * return pointer to opaque internal data strucure if successful,
+	 * return pointer to opaque internal data structure if successful,
 	 * NULL otherwise.
 	 *
 	 * @param[in] api: API version
@@ -198,7 +198,7 @@ struct foreign {
  * @param enable: regex to match foreign library name ("*" above) against
  * @returns: 0 on success, negative value on failure.
  */
-int init_foreign(const char *multipath_dir, const char *enable);
+int init_foreign(const char *enable);
 
 /**
  * cleanup_foreign(dir)
@@ -252,51 +252,53 @@ void check_foreign(void);
  * foreign_path_layout()
  * call this before printing paths, after get_path_layout(), to determine
  * output field width.
+ * @param width: an array allocated by alloc_path_layout()
  */
-void foreign_path_layout(void);
+void foreign_path_layout(fieldwidth_t *width);
 
 /**
  * foreign_multipath_layout()
  * call this before printing maps, after get_multipath_layout(), to determine
  * output field width.
+ * @param width: an array allocated by alloc_multipath_layout()
  */
-void foreign_multipath_layout(void);
+void foreign_multipath_layout(fieldwidth_t *width);
 
 /**
  * snprint_foreign_topology(buf, len, verbosity);
  * prints topology information from foreign libraries into buffer,
  * '\0' - terminated.
  * @param buf: output buffer
- * @param len: size of output buffer
  * @param verbosity: verbosity level
+ * @param width: an array of field widths, initialized by _get_path_layout()
  * @returns: number of printed characters excluding trailing '\0'.
  */
-int snprint_foreign_topology(char *buf, int len, int verbosity);
+int snprint_foreign_topology(struct strbuf *buf, int verbosity,
+			     const fieldwidth_t *width);
 
 /**
  * snprint_foreign_paths(buf, len, style, pad);
  * prints formatted path information from foreign libraries into buffer,
  * '\0' - terminated.
  * @param buf: output buffer
- * @param len: size of output buffer
  * @param style: format string
- * @param pad: whether to pad field width
+ * @param width: array initialized with get_path_layout(), or NULL for no padding
  * @returns: number of printed characters excluding trailing '\0'.
  */
-int snprint_foreign_paths(char *buf, int len, const char *style, int pad);
+int snprint_foreign_paths(struct strbuf *buf, const char *style,
+			  const fieldwidth_t *width);
 
 /**
  * snprint_foreign_multipaths(buf, len, style, pad);
  * prints formatted map information from foreign libraries into buffer,
  * '\0' - terminated.
  * @param buf: output buffer
- * @param len: size of output buffer
  * @param style: format string
- * @param pad: whether to pad field width
+ * @param width: array initialized with get_path_layout(), or NULL for no padding
  * @returns: number of printed characters excluding trailing '\0'.
  */
-int snprint_foreign_multipaths(char *buf, int len,
-			       const char *style, int pretty);
+int snprint_foreign_multipaths(struct strbuf *buf, const char *style,
+			       const fieldwidth_t *width);
 
 /**
  * print_foreign_topology(v)

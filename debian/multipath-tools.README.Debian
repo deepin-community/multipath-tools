@@ -1,6 +1,28 @@
 Additional information for users of multipath-tools from Debian.
 
 
+LVM over DM-Multipath
+=====================
+
+Debian Bug #1001710
+
+On a setup that involves both, LVM and DM-Multipath, it is important to set the
+right filter in lvm.conf file to ensure that LVM does not acquire the bare SCSI devices
+before DM-Multipath can.
+
+On such combined setups, the standard recommendation is to pvcreate devices on the 
+enumerated multipathed devices. And also ensure that the bare SCSI devices are filtered out
+from LVM's list
+
+	# filter = [ "a|/dev/mapper/|", "r|/block/|", "r|/disk/|", "r|/sd[b-z].*|", "a|.*|" ]
+
+In the above example snippet, it is ensured that LVM filters out any SCSI devices of name type
+sd[b-z].*
+
+Note: The enumeration of SCSI devices is not definite. Thus it is important to rely on 
+persistent device names when setting up the filter. The above filter snippet is just an example
+and should be adapted to individual environments.
+
 
 I see a lot of "io_setup failed" message using the directio checker
 ====================================================================
@@ -37,9 +59,9 @@ guidance on appropriate values for this parameter.
 
 
 
-
 What are these weird numbers in /dev/mapper?
 ============================================
+
 Modern Fibre-Channel connected storage devices are identified by
 World-Wide-Numbers. If multipath-tools detects one of these devices,
 it uses that as the default identifier in /dev/mapper.
@@ -79,6 +101,7 @@ For that, please follow the following steps:
 
 Where did my FC-connected filesystem go?
 ========================================
+
 If you were previously mounting a device connected to your system by
 Fibre Channel and then installed multipath-tools, you need to change
 the way you mount the device. The device must now be accessed using
@@ -103,6 +126,7 @@ See the output of 'multipath -l' to confirm this.
 
 Preventing multipath-tools mapping any devices
 ==============================================
+
 You may wish to prevent multipath-tools mapping any of your storage devices.
 To do this replace the contents of /etc/multipath.conf with:
 
@@ -112,6 +136,7 @@ To do this replace the contents of /etc/multipath.conf with:
 
 Booting from multipathed devices
 ================================
+
 To enable booting from multipathed devices install the multipath-tools-boot
 package. Be sure to update your bootloader configuration (e.g.
 /boot/grub/menu.lst) to point to the multipathed root device afterwards.
@@ -130,6 +155,18 @@ updated version of the configuration gets included in the initramfs.
 
  -- Guido Günther <agx@sigxcpu.org>  Tue, 20 Feb 2008 13:49:18 0100
 
+
+Development files
+=================
+
+Before Debian trixie, multipath-tools shipped development files for the
+various multipath libraries. Given the unclear status regarding a stable
+ABI of these libraries, they are now considered internal, private libraries
+of multipath(d).
+Even though they are installed in "public" library paths, the intention
+is to prevent other packages from linking against these libraries.
+
+  -- Chris Hofstaedtler <zeha@debian.org>  Sat, 03 Jun 2023 15:53:54 +0200
+
 -- 
 [1] https://bugzilla.redhat.com/show_bug.cgi?id=445268
-

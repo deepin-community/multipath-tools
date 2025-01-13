@@ -64,7 +64,7 @@ static int prepare_directio_read(int fd, int *blksz, char **pbuf,
 	long flags;
 
 	if (ioctl(fd, BLKBSZGET, blksz) < 0) {
-		pp_pl_log(3,"catnnot get blocksize, set default");
+		pp_pl_log(3,"cannot get blocksize, set default");
 		*blksz = DEF_BLK_SIZE;
 	}
 	if (posix_memalign((void **)pbuf, pgsize, *blksz))
@@ -104,10 +104,10 @@ static void cleanup_directio_read(int fd, char *buf, int restore_flags)
 	}
 }
 
-static int do_directio_read(int fd, unsigned int timeout, char *buf, int sz)
+static int do_directio_read(int fd, unsigned int timeout_ms, char *buf, int sz)
 {
 	fd_set read_fds;
-	struct timeval tm = { .tv_sec = timeout };
+	struct timeval tm = { .tv_sec = timeout_ms / 1000};
 	int ret;
 	int num_read;
 
@@ -158,7 +158,7 @@ static int get_ionum_and_basenum(char *args, int *ionum, double *basenum)
 		return 0;
 	}
 
-	arg = temp = STRDUP(args);
+	arg = temp = strdup(args);
 	if (!arg)
 		return 0;
 
@@ -185,15 +185,15 @@ static int get_ionum_and_basenum(char *args, int *ionum, double *basenum)
 	if (check_args_valid(*ionum, *basenum) == 0)
 		goto out;
 
-	FREE(arg);
+	free(arg);
 	return 1;
 out:
-	FREE(arg);
+	free(arg);
 	return 0;
 }
 
 /*
- * Do not scale the prioriy in a certain range such as [0, 1024]
+ * Do not scale the priority in a certain range such as [0, 1024]
  * because scaling will eliminate the effect of base_num.
  */
 int calcPrio(double lg_avglatency, double lg_maxavglatency,
@@ -208,7 +208,7 @@ int calcPrio(double lg_avglatency, double lg_maxavglatency,
 	return lg_maxavglatency - lg_avglatency;
 }
 
-int getprio(struct path *pp, char *args, unsigned int timeout)
+int getprio(struct path *pp, char *args)
 {
 	int rc, temp;
 	int io_num = 0;
@@ -247,7 +247,8 @@ int getprio(struct path *pp, char *args, unsigned int timeout)
 
 		(void)clock_gettime(CLOCK_MONOTONIC, &tv_before);
 
-		if (do_directio_read(pp->fd, timeout, buf, blksize)) {
+		if (do_directio_read(pp->fd, get_prio_timeout_ms(pp), buf,
+				     blksize)) {
 			pp_pl_log(0, "%s: path down", pp->dev);
 			cleanup_directio_read(pp->fd, buf, restore_flags);
 			return -1;
@@ -284,7 +285,7 @@ int getprio(struct path *pp, char *args, unsigned int timeout)
 
 	if (lg_avglatency > lg_maxavglatency) {
 		pp_pl_log(2,
-			  "%s: average latency (%lld us) is outside the thresold (%lld us)",
+			  "%s: average latency (%lld us) is outside the threshold (%lld us)",
 			  pp->dev, (long long)pow(base_num, lg_avglatency),
 			  (long long)MAX_AVG_LATENCY);
 		return DEFAULT_PRIORITY;

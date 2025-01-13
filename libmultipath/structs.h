@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#include <libdevmapper.h>
 
 #include "prio.h"
 #include "byteorder.h"
@@ -13,11 +14,9 @@
 #define SERIAL_SIZE		128
 #define NODE_NAME_SIZE		224
 #define PATH_STR_SIZE		16
-#define PARAMS_SIZE		4096
 #define FILE_NAME_SIZE		256
 #define CALLOUT_MAX_SIZE	256
 #define BLK_DEV_SIZE		33
-#define PATH_SIZE		512
 #define NAME_SIZE		512
 #define HOST_NAME_LEN		16
 #define SLOT_NAME_SIZE		40
@@ -55,14 +54,6 @@ enum failback_mode {
 	FAILBACK_MANUAL,
 	FAILBACK_IMMEDIATE,
 	FAILBACK_FOLLOWOVER
-};
-
-enum sysfs_buses {
-	SYSFS_BUS_UNDEF,
-	SYSFS_BUS_SCSI,
-	SYSFS_BUS_CCW,
-	SYSFS_BUS_CCISS,
-	SYSFS_BUS_NVME,
 };
 
 enum pathstates {
@@ -111,10 +102,17 @@ enum find_multipaths_states {
 	__FIND_MULTIPATHS_LAST,
 };
 
+enum marginal_pathgroups_mode {
+	MARGINAL_PATHGROUP_OFF = YN_NO,
+	MARGINAL_PATHGROUP_ON = YN_YES,
+	MARGINAL_PATHGROUP_FPIN,
+};
+
 enum flush_states {
-	FLUSH_UNDEF = YNU_UNDEF,
-	FLUSH_DISABLED = YNU_NO,
-	FLUSH_ENABLED = YNU_YES,
+	FLUSH_UNDEF,
+	FLUSH_NEVER,
+	FLUSH_ALWAYS,
+	FLUSH_UNUSED,
 };
 
 enum log_checker_err_states {
@@ -146,6 +144,18 @@ enum detect_checker_states {
 	DETECT_CHECKER_ON = YNU_YES,
 };
 
+enum detect_pgpolicy_states {
+	DETECT_PGPOLICY_UNDEF = YNU_UNDEF,
+	DETECT_PGPOLICY_OFF = YNU_NO,
+	DETECT_PGPOLICY_ON = YNU_YES,
+};
+
+enum detect_pgpolicy_use_tpg_states {
+	DETECT_PGPOLICY_USE_TPG_UNDEF = YNU_UNDEF,
+	DETECT_PGPOLICY_USE_TPG_OFF = YNU_NO,
+	DETECT_PGPOLICY_USE_TPG_ON = YNU_YES,
+};
+
 enum deferred_remove_states {
 	DEFERRED_REMOVE_UNDEF = YNU_UNDEF,
 	DEFERRED_REMOVE_OFF = YNU_NO,
@@ -164,6 +174,20 @@ enum max_sectors_kb_states {
 	MAX_SECTORS_KB_MIN = 4,  /* can't be smaller than page size */
 };
 
+enum queue_mode_states {
+	QUEUE_MODE_UNDEF = 0,
+	QUEUE_MODE_BIO,
+	QUEUE_MODE_RQ,
+};
+
+enum auto_resize_state {
+	AUTO_RESIZE_NEVER,
+	AUTO_RESIZE_GROW_ONLY,
+	AUTO_RESIZE_GROW_SHRINK,
+};
+
+#define PROTOCOL_UNSET -1
+
 enum scsi_protocol {
 	SCSI_PROTOCOL_FCP = 0,	/* Fibre Channel */
 	SCSI_PROTOCOL_SPI = 1,	/* parallel SCSI */
@@ -175,8 +199,37 @@ enum scsi_protocol {
 	SCSI_PROTOCOL_ADT = 7,	/* Media Changers */
 	SCSI_PROTOCOL_ATA = 8,
 	SCSI_PROTOCOL_USB = 9,  /* USB Attached SCSI (UAS), and others */
-	SCSI_PROTOCOL_UNSPEC = 0xf, /* No specific protocol */
+	SCSI_PROTOCOL_UNSPEC = 0xa, /* No specific protocol */
+	SCSI_PROTOCOL_END = 0xb, /* offset of the next sysfs_buses entry */
 };
+
+/* values from /sys/class/nvme/nvmeX */
+enum nvme_protocol {
+	NVME_PROTOCOL_PCIE = 0,
+	NVME_PROTOCOL_RDMA = 1,
+	NVME_PROTOCOL_FC = 2,
+	NVME_PROTOCOL_TCP = 3,
+	NVME_PROTOCOL_LOOP = 4,
+	NVME_PROTOCOL_APPLE_NVME = 5,
+	NVME_PROTOCOL_UNSPEC = 6, /* unknown protocol */
+};
+
+enum sysfs_buses {
+	SYSFS_BUS_UNDEF,
+	SYSFS_BUS_CCW,
+	SYSFS_BUS_CCISS,
+	SYSFS_BUS_SCSI,
+	SYSFS_BUS_NVME = SYSFS_BUS_SCSI + SCSI_PROTOCOL_END,
+};
+
+/*
+ * Linear ordering of bus/protocol
+ */
+#define LAST_BUS_PROTOCOL_ID (SYSFS_BUS_NVME + NVME_PROTOCOL_UNSPEC)
+unsigned int bus_protocol_id(const struct path *pp);
+extern const char * const protocol_name[];
+
+#define SCSI_INVALID_LUN ~0ULL
 
 enum no_undef_states {
 	NU_NO = -1,
@@ -199,6 +252,13 @@ enum initialized_states {
 	 * mapped by some multipath map because of map reload failure.
 	 */
 	INIT_REMOVED,
+	/*
+	 * INIT_PARTIAL: paths added by update_pathvec_from_dm() will not
+	 * be fully initialized. This will be handled when an add or
+	 * change uevent is received.
+	 */
+	INIT_PARTIAL,
+	__INIT_LAST,
 };
 
 enum prkey_sources {
@@ -219,6 +279,41 @@ enum vpd_vendor_ids {
 	VPD_VP_ARRAY_SIZE, /* This must remain the last entry */
 };
 
+/*
+ * Multipath treats 0 as undefined for optional config parameters.
+ * Use this for cases where 0 is a valid option for systems multipath
+ * is communicating with
+ */
+enum undefined_off_zero {
+	UOZ_UNDEF = 0,
+	UOZ_OFF = -1,
+	UOZ_ZERO = -2,
+};
+
+enum fast_io_fail_states {
+	MP_FAST_IO_FAIL_UNSET = UOZ_UNDEF,
+	MP_FAST_IO_FAIL_OFF = UOZ_OFF,
+	MP_FAST_IO_FAIL_ZERO = UOZ_ZERO,
+};
+
+enum eh_deadline_states {
+	EH_DEADLINE_UNSET = UOZ_UNDEF,
+	EH_DEADLINE_OFF = UOZ_OFF,
+	EH_DEADLINE_ZERO = UOZ_ZERO,
+};
+
+enum max_retries_states {
+	MAX_RETRIES_UNSET = UOZ_UNDEF,
+	MAX_RETRIES_OFF = UOZ_OFF,
+	MAX_RETRIES_ZERO = UOZ_ZERO,
+};
+
+enum recheck_wwid_states {
+	RECHECK_WWID_UNDEF = YNU_UNDEF,
+	RECHECK_WWID_OFF = YNU_NO,
+	RECHECK_WWID_ON = YNU_YES,
+};
+
 struct vpd_vendor_page {
 	int pg;
 	const char *name;
@@ -229,10 +324,10 @@ struct sg_id {
 	int host_no;
 	int channel;
 	int scsi_id;
-	int lun;
+	uint64_t lun;
 	short h_cmd_per_lun;
 	short d_queue_depth;
-	enum scsi_protocol proto_id;
+	int proto_id;
 	int transport_id;
 };
 
@@ -246,6 +341,8 @@ struct hd_geometry {
 	unsigned long start;
 };
 #endif
+
+#define GROUP_ID_UNDEF -1
 
 struct path {
 	char dev[FILE_NAME_SIZE];
@@ -274,14 +371,14 @@ struct path {
 	int detect_prio;
 	int detect_checker;
 	int tpgs;
-	char * uid_attribute;
-	char * getuid;
+	const char *uid_attribute;
 	struct prio prio;
 	struct checker checker;
 	struct multipath * mpp;
 	int fd;
 	int initialized;
 	int retriggers;
+	int partial_retrigger_delay;
 	unsigned int path_failures;
 	time_t dis_reinstate_time;
 	int disable_reinstate;
@@ -293,16 +390,33 @@ struct path {
 	int find_multipaths_timeout;
 	int marginal;
 	int vpd_vendor_id;
+	int recheck_wwid;
+	int fast_io_fail;
+	unsigned int dev_loss;
+	int eh_deadline;
+	bool is_checked;
+	bool can_use_env_uid;
+	unsigned int checker_timeout;
 	/* configlet pointers */
 	vector hwe;
 	struct gen_path generic_path;
+	int tpg_id;
 };
 
 typedef int (pgpolicyfn) (struct multipath *, vector);
 
+
+enum prflag_value {
+	PRFLAG_UNKNOWN,
+	PRFLAG_UNSET,
+	PRFLAG_SET,
+};
+
 struct multipath {
 	char wwid[WWID_SIZE];
 	char alias_old[WWID_SIZE];
+	int detect_pgpolicy;
+	int detect_pgpolicy_use_tpg;
 	int pgpolicy;
 	pgpolicyfn *pgpolicyfn;
 	int nextpg;
@@ -320,10 +434,10 @@ struct multipath {
 	int minio;
 	int flush_on_last_del;
 	int attribute_flags;
-	int fast_io_fail;
 	int retain_hwhandler;
 	int deferred_remove;
 	bool in_recovery;
+	bool need_reload;
 	int san_path_err_threshold;
 	int san_path_err_forget_rate;
 	int san_path_err_recovery_time;
@@ -338,14 +452,14 @@ struct multipath {
 	int needs_paths_uevent;
 	int ghost_delay;
 	int ghost_delay_tick;
-	unsigned int dev_loss;
+	int queue_mode;
 	uid_t uid;
 	gid_t gid;
 	mode_t mode;
 	unsigned long long size;
 	vector paths;
 	vector pg;
-	struct dm_info * dmi;
+	struct dm_info dmi;
 
 	/* configlet pointers */
 	char * alias;
@@ -374,9 +488,10 @@ struct multipath {
 	int prkey_source;
 	struct be64 reservation_key;
 	uint8_t sa_flags;
-	unsigned char prflag;
+	int prflag;
 	int all_tg_pt;
 	struct gen_multipath generic_mp;
+	bool fpin_must_reload;
 };
 
 static inline int marginal_path_check_enabled(const struct multipath *mpp)
@@ -422,6 +537,7 @@ struct host_group {
 struct path * alloc_path (void);
 struct pathgroup * alloc_pathgroup (void);
 struct multipath * alloc_multipath (void);
+void *set_mpp_hwe(struct multipath *mpp, const struct path *pp);
 void uninitialize_path(struct path *pp);
 void free_path (struct path *);
 void free_pathvec (vector vec, enum free_path_mode free_paths);
@@ -453,13 +569,14 @@ struct path * find_path_by_devt (const struct _vector *pathvec, const char *devt
 struct path * find_path_by_dev (const struct _vector *pathvec, const char *dev);
 struct path * first_path (const struct multipath *mpp);
 
+struct path *mp_find_path_by_devt(const struct multipath *mpp, const char *devt);
+
+
 int pathcount (const struct multipath *, int);
 int count_active_paths(const struct multipath *);
 int count_active_pending_paths(const struct multipath *);
 int pathcmp (const struct pathgroup *, const struct pathgroup *);
 int add_feature (char **, const char *);
 int remove_feature (char **, const char *);
-
-extern char sysfs_path[PATH_SIZE];
 
 #endif /* _STRUCTS_H */

@@ -290,7 +290,7 @@ uint32_t attribute((pure)) crc32_be(uint32_t crc, unsigned char const *p, size_t
  * the end, so we have to add 32 extra cycles shifting in zeros at the
  * end of every message,
  *
- * So the standard trick is to rearrage merging in the next_input_bit()
+ * So the standard trick is to rearrange merging in the next_input_bit()
  * until the moment it's needed.  Then the first 32 cycles can be precomputed,
  * and merging in the final 32 zero bits to make room for the CRC can be
  * skipped entirely.
@@ -342,7 +342,7 @@ uint32_t attribute((pure)) crc32_be(uint32_t crc, unsigned char const *p, size_t
  * but again the multiple of the polynomial to subtract depends only on
  * the high bits, the high 8 bits in this case.
  *
- * The multile we need in that case is the low 32 bits of a 40-bit
+ * The multiple we need in that case is the low 32 bits of a 40-bit
  * value whose high 8 bits are given, and which is a multiple of the
  * generator polynomial.  This is simply the CRC-32 of the given
  * one-byte message.

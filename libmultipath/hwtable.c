@@ -11,7 +11,7 @@
 
 /*
  * Tuning suggestions on these parameters should go to
- * dm-devel@redhat.com (subscribers-only, see README)
+ * <dm-devel@lists.linux.dev> (see README.md)
  *
  * You are welcome to claim maintainership over a controller
  * family. Please mail the currently enlisted maintainer and
@@ -60,13 +60,15 @@
 		.no_path_retry = NO_PATH_RETRY_UNDEF,
 		.minio         = 1000,
 		.minio_rq      = 1,
-		.flush_on_last_del = FLUSH_DISABLED,
+		.flush_on_last_del = FLUSH_UNUSED,
 		.user_friendly_names = USER_FRIENDLY_NAMES_OFF,
 		.fast_io_fail  = 5,
 		.dev_loss      = 600,
 		.retain_hwhandler = RETAIN_HWHANDLER_ON,
 		.detect_prio   = DETECT_PRIO_ON,
 		.detect_checker = DETECT_CHECKER_ON,
+		.detect_pgpolicy = DETECT_PGPOLICY_ON,
+		.detect_pgpolicy_use_tpg = DETECT_PGPOLICY_USE_TPG_OFF,
 		.deferred_remove = DEFERRED_REMOVE_OFF,
 		.delay_watch_checks = DELAY_CHECKS_OFF,
 		.delay_wait_checks = DELAY_CHECKS_OFF,
@@ -86,11 +88,12 @@ static struct hwentry default_hw[] = {
 	 */
 	{
 		/* Generic NVMe */
-		.vendor        = "NVME",
+		.vendor        = "NVM[eE]",
 		.product       = ".*",
 		.uid_attribute = DEFAULT_NVME_UID_ATTRIBUTE,
 		.checker_name  = NONE,
-		.retain_hwhandler = RETAIN_HWHANDLER_OFF,
+		.pgpolicy      = GROUP_BY_PRIO,
+		.pgfailback    = -FAILBACK_IMMEDIATE,
 	},
 	/*
 	 * Apple
@@ -107,7 +110,7 @@ static struct hwentry default_hw[] = {
 	 * HPE
 	 */
 	{
-		/* 3PAR / Primera */
+		/* 3PAR / Primera / Alletra 9000 */
 		.vendor        = "3PARdata",
 		.product       = "VV",
 		.pgpolicy      = GROUP_BY_PRIO,
@@ -118,6 +121,12 @@ static struct hwentry default_hw[] = {
 		.fast_io_fail  = 10,
 		.dev_loss      = MAX_DEV_LOSS_TMO,
 		.vpd_vendor_id = VPD_VP_HP3PAR,
+	},
+	{
+		/* Alletra 9000 NVMe */
+		.vendor        = "NVME",
+		.product       = "HPE Alletra",
+		.no_path_retry = NO_PATH_RETRY_QUEUE,
 	},
 	{
 		/* RA8000 / ESA12000 */
@@ -182,8 +191,8 @@ static struct hwentry default_hw[] = {
 	},
 	{
 		/* MSA 1040, 1050, 1060, 2040, 2050 and 2060 families */
-		.vendor        = "HP",
-		.product       = "MSA [12]0[456]0 SA[NS]",
+		.vendor        = "(HP|HPE)",
+		.product       = "MSA [12]0[456]0 (SAN|SAS|FC|iSCSI)",
 		.pgpolicy      = GROUP_BY_PRIO,
 		.pgfailback    = -FAILBACK_IMMEDIATE,
 		.no_path_retry = 18,
@@ -192,7 +201,7 @@ static struct hwentry default_hw[] = {
 	{
 		/* SAN Virtualization Services Platform */
 		.vendor        = "HP",
-		.product       = "HSVX700",
+		.product       = "(HSVX700|HSVX740)",
 		.hwhandler     = "1 alua",
 		.pgpolicy      = GROUP_BY_PRIO,
 		.pgfailback    = -FAILBACK_IMMEDIATE,
@@ -225,7 +234,7 @@ static struct hwentry default_hw[] = {
 		.prio_name     = PRIO_ALUA,
 	},
 	{
-		/* Nimble Storage */
+		/* Nimble Storage / HPE Alletra 5000/6000 */
 		.vendor        = "Nimble",
 		.product       = "Server",
 		.hwhandler     = "1 alua",
@@ -333,6 +342,12 @@ static struct hwentry default_hw[] = {
 		.no_path_retry = 6,
 	},
 	{
+		/* PowerMax NVMe */
+		.vendor        = "NVME",
+		.product       = "EMC PowerMax",
+		.no_path_retry = NO_PATH_RETRY_QUEUE,
+	},
+	{
 		/* DGC CLARiiON CX/AX / VNX and Unity */
 		.vendor        = "^DGC",
 		.product       = "^(RAID|DISK|VRAID)",
@@ -343,6 +358,7 @@ static struct hwentry default_hw[] = {
 		.no_path_retry = (300 / DEFAULT_CHECKINT),
 		.checker_name  = EMC_CLARIION,
 		.prio_name     = PRIO_EMC,
+		.detect_checker = DETECT_CHECKER_OFF,
 	},
 	{
 		/* Invista / VPLEX */
@@ -359,14 +375,11 @@ static struct hwentry default_hw[] = {
 		.pgpolicy      = MULTIBUS,
 	},
 	{
-		/*
-		 * SC Series, formerly Compellent
-		 *
-		 * Maintainer: Sean McGinnis <sean_mcginnis@dell.com>
-		 */
+		/* SC Series (formerly Compellent) */
 		.vendor        = "COMPELNT",
 		.product       = "Compellent Vol",
-		.pgpolicy      = MULTIBUS,
+		.pgpolicy      = GROUP_BY_PRIO,
+		.pgfailback    = -FAILBACK_IMMEDIATE,
 		.no_path_retry = NO_PATH_RETRY_QUEUE,
 	},
 	{
@@ -383,10 +396,30 @@ static struct hwentry default_hw[] = {
 		.no_path_retry = 30,
 	},
 	{
-		/* EMC PowerMax NVMe */
-		.vendor        = "NVME",
-		.product       = "^EMC PowerMax_",
-		.pgpolicy      = MULTIBUS,
+		/* PowerStore */
+		.vendor        = "DellEMC",
+		.product       = "PowerStore",
+		.pgpolicy      = GROUP_BY_PRIO,
+		.prio_name     = PRIO_ALUA,
+		.hwhandler     = "1 alua",
+		.pgfailback    = -FAILBACK_IMMEDIATE,
+		.no_path_retry = 3,
+		.fast_io_fail  = 15,
+	},
+	{
+		/* PowerStore NVMe */
+		.vendor        = ".*",
+		.product       = "dellemc-powerstore",
+		.no_path_retry = 3,
+	},
+	{
+		/* PowerVault ME 4/5 families */
+		.vendor        = "DellEMC",
+		.product       = "^ME",
+		.pgpolicy      = GROUP_BY_PRIO,
+		.prio_name     = PRIO_ALUA,
+		.hwhandler     = "1 alua",
+		.pgfailback    = -FAILBACK_IMMEDIATE,
 	},
 	/*
 	 * Fujitsu
@@ -431,6 +464,7 @@ static struct hwentry default_hw[] = {
 	{
 		/*
 		 * ETERNUS AB/HB
+		 *
 		 * Maintainer: NetApp RDAC team <ng-eseries-upstream-maintainers@netapp.com>
 		 */
 		.vendor        = "FUJITSU",
@@ -450,10 +484,12 @@ static struct hwentry default_hw[] = {
 	 * Maintainer: Matthias Rudolph <Matthias.Rudolph@hitachivantara.com>
 	 */
 	{
-		/* USP-V, HUS VM, VSP, VSP G1X00 and VSP GX00 families / HP XP */
-		.vendor        = "(HITACHI|HP)",
+		/* USP-V, HUS VM, VSP, VSP G1X00 and VSP GX00 families / HPE XP */
+		.vendor        = "(HITACHI|HP|HPE)",
 		.product       = "^OPEN-",
-		.pgpolicy      = MULTIBUS,
+		.pgpolicy      = GROUP_BY_PRIO,
+		.pgfailback    = -FAILBACK_IMMEDIATE,
+		.no_path_retry = 10,
 	},
 	{
 		/* AMS other than AMS 2000 */
@@ -472,8 +508,6 @@ static struct hwentry default_hw[] = {
 	},
 	/*
 	 * IBM
-	 *
-	 * Maintainer: Hannes Reinecke <hare@suse.de>
 	 */
 	{
 		/* ProFibre 4000R */
@@ -645,16 +679,24 @@ static struct hwentry default_hw[] = {
 		.vendor        = "IBM",
 		.product       = "^2107900",
 		.no_path_retry = NO_PATH_RETRY_QUEUE,
-		.pgpolicy      = MULTIBUS,
+		.pgpolicy      = GROUP_BY_PRIO,
+		.pgfailback    = -FAILBACK_IMMEDIATE,
 	},
 	{
-		/* Storwize family / SAN Volume Controller / Flex System V7000 / FlashSystem V840/V9000/9100 */
+		// Storwize V5000/V7000 lines / SAN Volume Controller (SVC)
+		// Flex System V7000 / FlashSystem V840/V9000 and 5x00/7x00/9x00
 		.vendor        = "IBM",
 		.product       = "^2145",
 		.no_path_retry = NO_PATH_RETRY_QUEUE,
 		.pgpolicy      = GROUP_BY_PRIO,
 		.pgfailback    = -FAILBACK_IMMEDIATE,
 		.prio_name     = PRIO_ALUA,
+	},
+	{
+		/* FlashSystem(Storwize/SVC) NVMe */
+		.vendor        = "NVME",
+		.product       = "IBM[ ]+2145",
+		.no_path_retry = NO_PATH_RETRY_QUEUE,
 	},
 	{
 		/* PAV DASD ECKD */
@@ -700,13 +742,20 @@ static struct hwentry default_hw[] = {
 		.vendor        = "(XIV|IBM)",
 		.product       = "(NEXTRA|2810XIV)",
 		.no_path_retry = NO_PATH_RETRY_QUEUE,
-		.pgpolicy      = MULTIBUS,
+		.pgpolicy      = GROUP_BY_PRIO,
+		.pgfailback    = 15,
 	},
 	{
 		/* TMS RamSan / FlashSystem 710/720/810/820/840/900 */
 		.vendor        = "(TMS|IBM)",
 		.product       = "(RamSan|FlashSystem)",
 		.pgpolicy      = MULTIBUS,
+	},
+	{
+		/* FlashSystem(RamSan) NVMe */
+		.vendor        = "NVMe",
+		.product       = "FlashSystem",
+		.no_path_retry = NO_PATH_RETRY_FAIL,
 	},
 	{
 		/* (DDN) DCS9900, SONAS 2851-DR1 */
@@ -770,7 +819,7 @@ static struct hwentry default_hw[] = {
 	 */
 	{
 		/*
-		 * ONTAP family
+		 * ONTAP FAS/AFF Series
 		 *
 		 * Maintainer: Martin George <marting@netapp.com>
 		 */
@@ -780,14 +829,14 @@ static struct hwentry default_hw[] = {
 		.no_path_retry = NO_PATH_RETRY_QUEUE,
 		.pgpolicy      = GROUP_BY_PRIO,
 		.pgfailback    = -FAILBACK_IMMEDIATE,
-		.flush_on_last_del = FLUSH_ENABLED,
+		.flush_on_last_del = FLUSH_ALWAYS,
 		.dev_loss      = MAX_DEV_LOSS_TMO,
 		.prio_name     = PRIO_ONTAP,
 		.user_friendly_names = USER_FRIENDLY_NAMES_OFF,
 	},
 	{
 		/*
-		 * SANtricity(RDAC) family
+		 * SANtricity(RDAC) E/EF Series
 		 *
 		 * Maintainer: NetApp RDAC team <ng-eseries-upstream-maintainers@netapp.com>
 		 */
@@ -814,14 +863,9 @@ static struct hwentry default_hw[] = {
 		.no_path_retry = 24,
 	},
 	{
-		/*
-		 * NVMe-FC namespace devices: MULTIBUS, queueing preferred
-		 *
-		 * The hwtable is searched backwards, so place this after "Generic NVMe"
-		 */
-		.vendor	       = "NVME",
+		/* ONTAP NVMe */
+		.vendor        = "NVME",
 		.product       = "^NetApp ONTAP Controller",
-		.pgpolicy      = MULTIBUS,
 		.no_path_retry = NO_PATH_RETRY_QUEUE,
 	},
 	/*
@@ -1016,17 +1060,19 @@ static struct hwentry default_hw[] = {
 		.prio_name     = PRIO_ALUA,
 	},
 	/*
-	 * Linux-IO Target
+	 * Linux
 	 */
 	{
-		/* Linux-IO Target */
+		/* Linux-IO (LIO) Target */
 		.vendor        = "(LIO-ORG|SUSE)",
-		.product       = "RBD",
+		.product       = ".*",
 		.hwhandler     = "1 alua",
 		.pgpolicy      = GROUP_BY_PRIO,
 		.pgfailback    = -FAILBACK_IMMEDIATE,
 		.no_path_retry = 12,
 		.prio_name     = PRIO_ALUA,
+		.checker_name  = DIRECTIO,
+		.detect_checker = DETECT_CHECKER_OFF,
 	},
 	/*
 	 * DataCore
@@ -1060,18 +1106,33 @@ static struct hwentry default_hw[] = {
 		.pgfailback    = -FAILBACK_IMMEDIATE,
 		.hwhandler     = "1 alua",
 		.prio_name     = PRIO_ALUA,
+		.detect_prio   = DETECT_PRIO_OFF,
 		.fast_io_fail  = 10,
 		.max_sectors_kb = 4096,
+	},
+	{
+		/* FlashArray NVMe */
+		.vendor        = "NVME",
+		.product       = "Pure Storage FlashArray",
+		.no_path_retry = 10,
 	},
 	/*
 	 * Huawei
 	 */
 	{
-		/* OceanStor V3 */
+		/* OceanStor V3-V6 */
 		.vendor        = "HUAWEI",
 		.product       = "XSG1",
 		.pgpolicy      = GROUP_BY_PRIO,
-		.prio_name     = PRIO_ALUA,
+		.pgfailback    = -FAILBACK_IMMEDIATE,
+		.no_path_retry = 15,
+	},
+	{
+		/* OceanStor NVMe */
+		.vendor        = "NVM[eE]",
+		.product       = "Huawei-XSG1",
+		.checker_name  = DIRECTIO,
+		.no_path_retry = 12,
 	},
 	/*
 	 * Kove
@@ -1099,9 +1160,7 @@ static struct hwentry default_hw[] = {
 		.no_path_retry = NO_PATH_RETRY_FAIL,
 		.minio         = 1,
 		.minio_rq      = 1,
-		.flush_on_last_del = FLUSH_ENABLED,
 		.fast_io_fail  = 15,
-		.dev_loss      = 15,
 	},
 	/*
 	 * Kaminario
@@ -1113,8 +1172,9 @@ static struct hwentry default_hw[] = {
 		.pgpolicy      = MULTIBUS,
 	},
 	/*
-	 * Imation/Nexsan
+	 * StorCentric
 	 */
+		/* Nexsan */
 	{
 		/* E-Series */
 		.vendor        = "NEXSAN",
@@ -1143,9 +1203,7 @@ static struct hwentry default_hw[] = {
 		.prio_name     = PRIO_ALUA,
 		.no_path_retry = 30,
 	},
-	/*
-	 * Violin Systems
-	 */
+		/* Violin Systems */
 	{
 		/* 3000 / 6000 Series */
 		.vendor        = "VIOLIN",
@@ -1154,7 +1212,7 @@ static struct hwentry default_hw[] = {
 		.no_path_retry = 30,
 	},
 	{
-		/* 3000 / 6000 Series - ALUA mode */
+		/* 3000 / 6000 Series (ALUA mode) */
 		.vendor        = "VIOLIN",
 		.product       = "SAN ARRAY ALUA",
 		.hwhandler     = "1 alua",
@@ -1189,6 +1247,14 @@ static struct hwentry default_hw[] = {
 		/* Magnitude family */
 		.vendor        = "(XIOTECH|XIOtech)",
 		.product       = "Magnitude",
+		.pgpolicy      = MULTIBUS,
+		.no_path_retry = 30,
+	},
+		/* Vexata */
+	{
+		/* VX */
+		.vendor        = "Vexata",
+		.product       = "VX",
 		.pgpolicy      = MULTIBUS,
 		.no_path_retry = 30,
 	},

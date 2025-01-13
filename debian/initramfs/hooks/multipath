@@ -1,0 +1,54 @@
+#!/bin/sh
+
+PREREQS="udev"
+
+prereqs() { echo "$PREREQS"; }
+
+case $1 in
+prereqs)
+	prereqs
+	exit 0
+	;;
+esac
+
+if [ ! -x /usr/sbin/multipath ]; then
+	exit 0
+fi
+
+. /usr/share/initramfs-tools/hook-functions
+
+copy_exec /usr/sbin/dmsetup
+copy_exec /usr/lib/udev/dmsetup_env
+
+# udev: multipath
+copy_exec /usr/sbin/multipath
+copy_file udev_rule /usr/lib/udev/rules.d/56-dm-mpath.rules
+copy_file udev_rule /usr/lib/udev/rules.d/60-multipath.rules
+
+# udev: kpartx
+copy_exec /usr/sbin/kpartx
+copy_exec /usr/bin/partx
+copy_exec /usr/lib/udev/kpartx_id
+copy_file udev_rule /usr/lib/udev/rules.d/56-dm-parts.rules
+copy_file udev_rule /usr/lib/udev/rules.d/60-kpartx.rules
+copy_file udev_rule /usr/lib/udev/rules.d/68-del-part-nodes.rules
+
+# multipathd and libraries
+mkdir -p $DESTDIR/usr/lib/multipath/
+for x in /usr/lib/multipath/*; do
+	copy_exec $x
+done
+copy_exec /usr/sbin/multipathd
+# multipathd requires libgcc_s.so.1 (not handled by copy_exec() as it's dlopen()'ed).
+copy_libgcc
+
+# multipathd requires /run/multipathd.pid
+mkdir -p $DESTDIR/run
+
+[ -r /etc/multipath.conf ] && copy_file config /etc/multipath.conf
+
+[ -r /etc/multipath/bindings ] && copy_file config /etc/multipath/bindings
+[ -r /etc/multipath/wwids ] && copy_file config /etc/multipath/wwids
+
+copy_modules_dir kernel/drivers/md/
+copy_modules_dir kernel/drivers/scsi/device_handler

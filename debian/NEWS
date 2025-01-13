@@ -1,3 +1,48 @@
+multipath-tools (0.9.8-1) unstable; urgency=medium
+
+  Socket activation as introduced in 0.9.4-6 was turned off again,
+  as upstream does not support it and claims it does not work.
+
+  Please make sure you have multipathd.service enabled:
+
+    systemctl enable multipathd.service
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 13 Jun 2024 02:39:11 +0200
+
+multipath-tools (0.9.4-7) unstable; urgency=medium
+
+  Booting from multipathed devices has significantly changed. It is recommended
+  testing your specific setup still boots properly, if you rely on this.
+
+  SysV init scripts have been removed, as they may clash with socket activation
+  and upgrade scenarios, especially when multipathd itself is not needed.
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sat, 11 Nov 2023 00:41:23 +0100
+
+multipath-tools (0.9.4-6) unstable; urgency=medium
+
+  The systemd service for multipathd is now entirely socket-activated.  On
+  new installations without any multipath device present in the system,
+  only multipathd.socket will be enabled and active.  If there are
+  multipath devices available, then multipath.service will be activated (but
+  not enabled).
+
+  If you are upgrading from an existing installation and would like to use
+  socket activation from now on, please manually disable
+  multipathd.service and enable multipathd.socket:
+
+    systemctl disable multipathd.service
+    systemctl enable multipathd.socket
+
+  However, please keep in mind that socket activation does NOT work if
+  your root partition is located on a multipath device (in other words,
+  if the multipath-tools-boot package is installed).  If that is your
+  case, then keep multipathd.service enabled:
+
+    systemctl enable multipathd.service
+
+ -- Sergio Durigan Junior <sergiodj@debian.org>  Sun, 15 Oct 2023 22:25:37 -0400
+
 multipath-tools (0.7.7-1) unstable; urgency=medium
 
   systemd support is well integrated for multipath-tools now. The old
@@ -24,7 +69,7 @@ multipath-tools (0.4.7-2) unstable; urgency=low
 
   udev, which provides scsi_id, moved the binary to /lib/udev.
   The old name will stop working in the future.
-  
+
   The default config now uses /lib/udev/scsi_id. And you have to
   update /etc/multipath.conf by hand to reflect the new location.
 

@@ -3,93 +3,75 @@
 #
 include ../Makefile.inc
 
-SONAME = 0
-DEVLIB = libmultipath.so
-LIBS = $(DEVLIB).$(SONAME)
+DEVLIB := libmultipath.so
+CPPFLAGS += -I$(mpathutildir) -I$(mpathcmddir) -I$(nvmedir) -D_GNU_SOURCE $(SYSTEMD_CPPFLAGS)
+CFLAGS += $(LIB_CFLAGS)
+LIBDEPS += -lpthread -ldl -ldevmapper -ludev -L$(mpathutildir) -lmpathutil -L$(mpathcmddir) -lmpathcmd \
+	-lmount -lurcu -laio $(SYSTEMD_LIBDEPS)
 
-CFLAGS += $(LIB_CFLAGS) -I$(mpathcmddir) -I$(mpathpersistdir) -I$(nvmedir)
+# object files referencing MULTIPATH_DIR or CONFIG_DIR
+# they need to be recompiled for unit tests
+OBJS-U := prio.o checkers.o foreign.o config.o
+OBJS-T := $(patsubst %.o,%-test.o,$(OBJS-U))
 
-LIBDEPS += -lpthread -ldl -ldevmapper -ludev -L$(mpathcmddir) -lmpathcmd -lurcu -laio
-
-ifdef SYSTEMD
-	CFLAGS += -DUSE_SYSTEMD=$(SYSTEMD)
-	ifeq ($(shell test $(SYSTEMD) -gt 209 && echo 1), 1)
-		LIBDEPS += -lsystemd
-	else
-		LIBDEPS += -lsystemd-daemon
-	endif
-endif
-
-ifneq ($(call check_func,dm_task_no_flush,/usr/include/libdevmapper.h),0)
-	CFLAGS += -DLIBDM_API_FLUSH -D_GNU_SOURCE
-endif
-
-ifneq ($(call check_func,dm_task_get_errno,/usr/include/libdevmapper.h),0)
-	CFLAGS += -DLIBDM_API_GET_ERRNO
-endif
-
-ifneq ($(call check_func,dm_task_set_cookie,/usr/include/libdevmapper.h),0)
-	CFLAGS += -DLIBDM_API_COOKIE
-endif
-
-ifneq ($(call check_func,udev_monitor_set_receive_buffer_size,/usr/include/libudev.h),0)
-	CFLAGS += -DLIBUDEV_API_RECVBUF
-endif
-
-ifneq ($(call check_func,dm_task_deferred_remove,/usr/include/libdevmapper.h),0)
-	CFLAGS += -DLIBDM_API_DEFERRED
-endif
-
-ifneq ($(call check_func,dm_hold_control_dev,/usr/include/libdevmapper.h),0)
-	CFLAGS += -DLIBDM_API_HOLD_CONTROL
-endif
-
-OBJS = memory.o parser.o vector.o devmapper.o callout.o \
-	hwtable.o blacklist.o util.o dmparser.o config.o \
+# other object files
+OBJS-O := devmapper.o hwtable.o blacklist.o dmparser.o \
 	structs.o discovery.o propsel.o dict.o \
-	pgpolicies.o debug.o defaults.o uevent.o time-util.o \
-	switchgroup.o uxsock.o print.o alias.o log_pthread.o \
-	log.o configure.o structs_vec.o sysfs.o prio.o checkers.o \
+	pgpolicies.o defaults.o uevent.o \
+	switchgroup.o print.o alias.o \
+	configure.o structs_vec.o sysfs.o \
 	lock.o file.o wwids.o prioritizers/alua_rtpg.o prkey.o \
-	io_err_stat.o dm-generic.o generic.o foreign.o nvme-lib.o \
+	io_err_stat.o dm-generic.o generic.o nvme-lib.o \
 	libsg.o valid.o
 
-all: $(LIBS)
+OBJS := $(OBJS-O) $(OBJS-U)
+
+all:	$(DEVLIB)
+
+include $(TOPDIR)/rules.mk
 
 nvme-lib.o: nvme-lib.c nvme-ioctl.c nvme-ioctl.h
-	$(CC) $(CFLAGS) -Wno-unused-function -c -o $@ $<
+	$(Q)$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-unused-function -c -o $@ $<
 
 # there are lots of "unused parameters" in dict.c
-# because not all handler / snprint methods nees all parameters
+# because not all handler / snprint methods need all parameters
 dict.o:	dict.c
-	$(CC) $(CFLAGS) -Wno-unused-parameter -c -o $@ $<
+	$(Q)$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-unused-parameter -c -o $@ $<
 
 make_static = $(shell sed '/^static/!s/^\([a-z]\{1,\} \)/static \1/' <$1 >$2)
 
 nvme-ioctl.c: nvme/nvme-ioctl.c
-	$(call make_static,$<,$@)
+	$(Q)$(call make_static,$<,$@)
 
 nvme-ioctl.h: nvme/nvme-ioctl.h
-	$(call make_static,$<,$@)
+	$(Q)$(call make_static,$<,$@)
 
-$(LIBS): $(OBJS)
-	$(CC) $(LDFLAGS) $(SHARED_FLAGS) -Wl,-soname=$@ -o $@ $(OBJS) $(LIBDEPS)
-	$(LN) $@ $(DEVLIB)
+../tests/$(LIBS): $(OBJS-O) $(OBJS-T) $(VERSION_SCRIPT)
+	$(Q)$(CC) $(LDFLAGS) $(SHARED_FLAGS) -Wl,-soname=`basename $@` \
+		-o $@ $(OBJS-O) $(OBJS-T) $(LIBDEPS)
+	$(Q)$(LN) $@ ${@:.so.0=.so}
 
-install:
-	$(INSTALL_PROGRAM) -d $(DESTDIR)$(syslibdir)
-	$(INSTALL_PROGRAM) -m 755 $(LIBS) $(DESTDIR)$(syslibdir)/$(LIBS)
-	$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(libdir)
-	$(LN) $(LIBS) $(DESTDIR)$(syslibdir)/$(DEVLIB)
+# This rule is invoked from tests/Makefile, overriding configdir and plugindir
+%-test.o: %.c
+	@echo building $@ because of $?
+	$(Q)$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+test-lib:	../tests/$(LIBS)
+
+install: all
+	$(Q)$(INSTALL_PROGRAM) -d $(DESTDIR)$(syslibdir)
+	$(Q)$(INSTALL_PROGRAM) -m 755 $(LIBS) $(DESTDIR)$(syslibdir)/$(LIBS)
+	$(Q)$(INSTALL_PROGRAM) -m 755 -d $(DESTDIR)$(plugindir)
+	$(Q)$(LN) $(LIBS) $(DESTDIR)$(syslibdir)/$(DEVLIB)
 
 uninstall:
-	$(RM) $(DESTDIR)$(syslibdir)/$(LIBS)
-	$(RM) $(DESTDIR)$(syslibdir)/$(DEVLIB)
+	$(Q)$(RM) $(DESTDIR)$(syslibdir)/$(LIBS)
+	$(Q)$(RM) $(DESTDIR)$(syslibdir)/$(DEVLIB)
 
 clean: dep_clean
-	$(RM) core *.a *.o *.so *.so.* *.gz nvme-ioctl.c nvme-ioctl.h
+	$(Q)$(RM) core *.a *.o *.so *.so.* *.abi nvme-ioctl.c nvme-ioctl.h autoconfig.h $(NV_VERSION_SCRIPT)
 
-include $(wildcard $(OBJS:.o=.d))
+include $(wildcard $(OBJS:.o=.d) $(OBJS-T:.o=.d))
 
 dep_clean:
-	$(RM) $(OBJS:.o=.d)
+	$(Q)$(RM) $(OBJS:.o=.d) $(OBJS-T:.o=.d)

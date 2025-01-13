@@ -94,7 +94,7 @@ efi_crc32(const void *buf, unsigned long len)
  *
  * Description: Returns 1 if PMBR is valid, 0 otherwise.
  * Validity depends on two things:
- *  1) MSDOS signature is in the last two bytes of the MBR
+ *  1) MS-DOS signature is in the last two bytes of the MBR
  *  2) One partition of type 0xEE is found
  */
 static int
@@ -357,7 +357,7 @@ is_gpt_valid(int fd, uint64_t lba,
 			__le32_to_cpu((*gpt)->num_partition_entries) *
 			__le32_to_cpu((*gpt)->sizeof_partition_entry));
 	if (crc != __le32_to_cpu((*gpt)->partition_entry_array_crc32)) {
-		// printf("GUID Partitition Entry Array CRC check failed.\n");
+		// printf("GUID Partition Entry Array CRC check failed.\n");
 		free(*gpt);
 		*gpt = NULL;
 		free(*ptes);
@@ -606,7 +606,7 @@ read_gpt_pt (int fd, __attribute__((unused)) struct slice all,
 	gpt_entry *ptes = NULL;
 	unsigned int i;
 	int n = 0;
-	int last_used_index=-1;
+	int last_used_index = -1;
 	int sector_size_mul = get_sector_size(fd)/512;
 
 	if (!find_valid_gpt (fd, &gpt, &ptes) || !gpt || !ptes) {

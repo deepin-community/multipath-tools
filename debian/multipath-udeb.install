@@ -1,4 +1,10 @@
-/sbin/multipath
-/lib/multipath/
-/lib/libmultipath.so.*
-/lib/libmpathcmd.so*
+# maybe enough to make multipath find devices
+debian/d-i/multipath.conf etc/
+udeb/usr/lib/libmpathcmd.so.* usr/lib/
+udeb/usr/lib/libmpathutil.so.* usr/lib/
+udeb/usr/lib/libmultipath.so.* usr/lib/
+udeb/usr/lib/multipath/ usr/lib/
+udeb/usr/lib/udev/rules.d/56-dm-mpath.rules usr/lib/udev/rules.d/
+udeb/usr/lib/udev/rules.d/60-multipath.rules usr/lib/udev/rules.d/
+udeb/usr/lib/udev/rules.d/99-z-dm-mpath-late.rules usr/lib/udev/rules.d/
+udeb/usr/sbin/multipath usr/sbin/

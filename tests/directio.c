@@ -24,6 +24,7 @@
 #include <setjmp.h>
 #include <stdlib.h>
 #include <cmocka.h>
+#include "wrap64.h"
 #include "globals.c"
 #include "../libmultipath/checkers/directio.c"
 
@@ -34,30 +35,44 @@ int ev_off = 0;
 struct timespec zero_timeout = { .tv_sec = 0 };
 struct timespec full_timeout = { .tv_sec = -1 };
 
-int __real_ioctl(int fd, unsigned long request, void *argp);
+#ifdef __GLIBC__
+#define ioctl_request_t unsigned long
+#else
+#define ioctl_request_t int
+#endif
 
-int __wrap_ioctl(int fd, unsigned long request, void *argp)
+int REAL_IOCTL(int fd, ioctl_request_t request, void *argp);
+
+int WRAP_IOCTL(int fd, ioctl_request_t request, void *argp)
 {
 #ifdef DIO_TEST_DEV
 	mock_type(int);
-	return __real_ioctl(fd, request, argp);
+	return REAL_IOCTL(fd, request, argp);
 #else
 	int *blocksize = (int *)argp;
 
 	assert_int_equal(fd, test_fd);
-	assert_int_equal(request, BLKBSZGET);
+	/*
+	 * On MUSL libc, the "request" arg is an int (glibc: unsigned long).
+	 * cmocka casts the args of assert_int_equal() to "unsigned long".
+	 * BLKSZGET = 80081270 is sign-extended to ffffffff80081270
+	 * when cast from int to unsigned long on s390x.
+	 * BLKSZGET must be cast to "int" and back to "unsigned long",
+	 * otherwise the assertion below will fail.
+	 */
+	assert_int_equal(request, (ioctl_request_t)BLKBSZGET);
 	assert_non_null(blocksize);
 	*blocksize = mock_type(int);
 	return 0;
 #endif
 }
 
-int __real_fcntl(int fd, int cmd, long arg);
+int REAL_FCNTL (int fd, int cmd, long arg);
 
-int __wrap_fcntl(int fd, int cmd, long arg)
+int WRAP_FCNTL (int fd, int cmd, long arg)
 {
 #ifdef DIO_TEST_DEV
-	return __real_fcntl(fd, cmd, arg);
+	return REAL_FCNTL(fd, cmd, arg);
 #else
 	assert_int_equal(fd, test_fd);
 	assert_int_equal(cmd, F_GETFL);
@@ -127,17 +142,16 @@ int __real_io_cancel(io_context_t ctx, struct iocb *iocb, struct io_event *evt);
 int __wrap_io_cancel(io_context_t ctx, struct iocb *iocb, struct io_event *evt)
 {
 #ifdef DIO_TEST_DEV
-	mock_type(int);
 	return __real_io_cancel(ctx, iocb, evt);
 #else
-	return mock_type(int);
+	return 0;
 #endif
 }
 
-int __real_io_getevents(io_context_t ctx, long min_nr, long nr,
+int REAL_IO_GETEVENTS(io_context_t ctx, long min_nr, long nr,
 			struct io_event *events, struct timespec *timeout);
 
-int __wrap_io_getevents(io_context_t ctx, long min_nr, long nr,
+int WRAP_IO_GETEVENTS(io_context_t ctx, long min_nr, long nr,
 			struct io_event *events, struct timespec *timeout)
 {
 	int nr_evs;
@@ -155,8 +169,8 @@ int __wrap_io_getevents(io_context_t ctx, long min_nr, long nr,
 #ifdef DIO_TEST_DEV
 	mock_ptr_type(struct timespec *);
 	mock_ptr_type(struct io_event *);
-	assert_int_equal(nr_evs, __real_io_getevents(ctx, min_nr, nr_evs,
-						     events, timeout));
+	assert_int_equal(nr_evs, REAL_IO_GETEVENTS(ctx, min_nr, nr_evs,
+						   events, timeout));
 #else
 	sleep_tmo = mock_ptr_type(struct timespec *);
 	if (sleep_tmo) {
@@ -179,7 +193,7 @@ int __wrap_io_getevents(io_context_t ctx, long min_nr, long nr,
 
 static void return_io_getevents_none(void)
 {
-	will_return(__wrap_io_getevents, 0);
+	wrap_will_return(WRAP_IO_GETEVENTS, 0);
 }
 
 static void return_io_getevents_nr(struct timespec *ts, int nr,
@@ -193,15 +207,15 @@ static void return_io_getevents_nr(struct timespec *ts, int nr,
 			mock_events[i + ev_off].res = reqs[i]->blksize;
 	}
 	while (nr > 0) {
-		will_return(__wrap_io_getevents, (nr > 128)? 128 : nr);
-		will_return(__wrap_io_getevents, ts);
-		will_return(__wrap_io_getevents, &mock_events[off + ev_off]);
+		wrap_will_return(WRAP_IO_GETEVENTS, (nr > 128)? 128 : nr);
+		wrap_will_return(WRAP_IO_GETEVENTS, ts);
+		wrap_will_return(WRAP_IO_GETEVENTS, &mock_events[off + ev_off]);
 		ts = NULL;
 		off += 128;
 		nr -= 128;
 	}
 	if (nr == 0)
-		will_return(__wrap_io_getevents, 0);
+		wrap_will_return(WRAP_IO_GETEVENTS, 0);
 	ev_off += i;
 }
 
@@ -237,7 +251,7 @@ static void do_libcheck_init(struct checker *c, int blocksize,
 	struct directio_context * ct;
 
 	c->fd = test_fd;
-	will_return(__wrap_ioctl, blocksize);
+	wrap_will_return(WRAP_IOCTL, blocksize);
 	assert_int_equal(libcheck_init(c), 0);
 	ct = (struct directio_context *)c->context;
 	assert_non_null(ct);
@@ -425,14 +439,8 @@ static void test_check_state_timeout(void **state)
 	do_libcheck_init(&c, 4096, NULL);
 	aio_grp = get_aio_grp(&c);
 	return_io_getevents_none();
-	will_return(__wrap_io_cancel, 0);
 	do_check_state(&c, 1, 30, PATH_DOWN);
 	check_aio_grp(aio_grp, 1, 0);
-#ifdef DIO_TEST_DEV
-	/* io_cancel will return negative value on timeout, so it happens again
-	 * when freeing the checker */
-	will_return(__wrap_io_cancel, 0);
-#endif
 	libcheck_free(&c);
 	do_libcheck_reset(1);
 }
@@ -454,12 +462,8 @@ static void test_check_state_async_timeout(void **state)
 	return_io_getevents_none();
 	do_check_state(&c, 0, 3, PATH_PENDING);
 	return_io_getevents_none();
-	will_return(__wrap_io_cancel, 0);
 	do_check_state(&c, 0, 3, PATH_DOWN);
 	check_aio_grp(aio_grp, 1, 0);
-#ifdef DIO_TEST_DEV
-	will_return(__wrap_io_cancel, 0);
-#endif
 	libcheck_free(&c);
 	do_libcheck_reset(1);
 }
@@ -487,17 +491,12 @@ static void test_free_with_pending(void **state)
 	check_aio_grp(aio_grp, 2, 0);
         libcheck_free(&c[0]);
 	check_aio_grp(aio_grp, 1, 0);
-        will_return(__wrap_io_cancel, 0);
         libcheck_free(&c[1]);
-#ifdef DIO_TEST_DEV
-	check_aio_grp(aio_grp, 1, 1); /* real cancel doesn't remove request */
-#else
-        check_aio_grp(aio_grp, 0, 0);
-#endif
+	check_aio_grp(aio_grp, 1, 1); /* cancel doesn't remove request */
         do_libcheck_reset(1);
 }
 
-/* test removing orpahed aio_group on free */
+/* test removing orphaned aio_group on free */
 static void test_orphaned_aio_group(void **state)
 {
 	struct checker c[AIO_GROUP_SIZE] = {{.cls = NULL}};
@@ -519,7 +518,6 @@ static void test_orphaned_aio_group(void **state)
 	assert_int_equal(i, 1);
 	for (i = 0; i < AIO_GROUP_SIZE; i++) {
 		assert_true(is_checker_running(&c[i]));
-		will_return(__wrap_io_cancel, -1);
 		if (i == AIO_GROUP_SIZE - 1) {
 			/* remove the orphaned group and create a new one */
 			will_return(__wrap_io_destroy, 0);
@@ -545,12 +543,10 @@ static void test_timeout_cancel_failed(void **state)
 		do_libcheck_init(&c[i], 4096, &reqs[i]);
 	aio_grp = get_aio_grp(c);
 	return_io_getevents_none();
-	will_return(__wrap_io_cancel, -1);
 	do_check_state(&c[0], 1, 30, PATH_DOWN);
 	assert_true(is_checker_running(&c[0]));
 	check_aio_grp(aio_grp, 2, 0);
 	return_io_getevents_none();
-	will_return(__wrap_io_cancel, -1);
 	do_check_state(&c[0], 1, 30, PATH_DOWN);
 	assert_true(is_checker_running(&c[0]));
 	return_io_getevents_nr(NULL, 1, &reqs[0], &res[0]);
@@ -586,7 +582,6 @@ static void test_async_timeout_cancel_failed(void **state)
 	return_io_getevents_none();
 	do_check_state(&c[1], 0, 2, PATH_PENDING);
 	return_io_getevents_none();
-	will_return(__wrap_io_cancel, -1);
 	do_check_state(&c[0], 0, 2, PATH_DOWN);
 #ifndef DIO_TEST_DEV
 	/* can't pick which even gets returned on real devices */
@@ -594,7 +589,6 @@ static void test_async_timeout_cancel_failed(void **state)
 	do_check_state(&c[1], 0, 2, PATH_UP);
 #endif
 	return_io_getevents_none();
-	will_return(__wrap_io_cancel, -1);
 	do_check_state(&c[0], 0, 2, PATH_DOWN);
 	assert_true(is_checker_running(&c[0]));
 	return_io_getevents_nr(NULL, 2, reqs, res);
@@ -623,7 +617,6 @@ static void test_orphan_checker_cleanup(void **state)
 	aio_grp = get_aio_grp(c);
 	return_io_getevents_none();
 	do_check_state(&c[0], 0, 30, PATH_PENDING);
-	will_return(__wrap_io_cancel, -1);
 	check_aio_grp(aio_grp, 2, 0);
 	libcheck_free(&c[0]);
 	check_aio_grp(aio_grp, 2, 1);
@@ -648,7 +641,6 @@ static void test_orphan_reset_cleanup(void **state)
 	orphan_aio_grp = get_aio_grp(&c);
 	return_io_getevents_none();
 	do_check_state(&c, 0, 30, PATH_PENDING);
-	will_return(__wrap_io_cancel, -1);
 	check_aio_grp(orphan_aio_grp, 1, 0);
 	libcheck_free(&c);
 	check_aio_grp(orphan_aio_grp, 1, 1);
@@ -693,7 +685,7 @@ static void test_check_state_blksize(void **state)
 	do_libcheck_reset(1);
 }
 
-/* test async checkers pending and getting resovled by another checker
+/* test async checkers pending and getting resolved by another checker
  * as well as the loops for getting multiple events */
 static void test_check_state_async(void **state)
 {
@@ -770,7 +762,7 @@ int main(void)
 {
 	int ret = 0;
 
-	conf.verbosity = 2;
+	init_test_verbosity(5);
 	ret += test_directio();
 	return ret;
 }

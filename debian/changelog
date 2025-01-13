@@ -1,8 +1,271 @@
-multipath-tools (0.8.5-deepin1) unstable; urgency=medium
+multipath-tools (0.9.9-1) unstable; urgency=medium
 
-  * Rebuild
+  [ mitchdz ]
+  * [14083d6] d/t/tgtbasedmpaths: do not brace expand as systemd does
+    not understand (Closes: #1074403)
 
- -- Deepin Packages Builder <packages@deepin.org>  Mon, 14 Nov 2022 17:47:58 +0800
+  [ Chris Hofstaedtler ]
+  * [b5fef17] New upstream version 0.9.9
+  * [ef49180] Rebase patches
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 07 Jul 2024 01:58:32 +0200
+
+multipath-tools (0.9.8-1) unstable; urgency=medium
+
+  [ mitchdz ]
+  * [9ffd042] tgtbasedmpaths: also check status of the socket (Closes:
+    #1069680)
+
+  [ Chris Hofstaedtler ]
+  * [6f82765] New upstream version 0.9.8
+  * [7e41b68] Refresh patches
+  * [7119712] Revert "Implement real socket activation of multipathd.service."
+    Unsupported upstream.
+  * [551f721] Install new udev rules.
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 13 Jun 2024 02:44:49 +0200
+
+multipath-tools (0.9.7-7) unstable; urgency=medium
+
+  * [9d90323] Drop hard-coded dependency on libaio1 (Closes: #1068944)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 14 Apr 2024 13:04:31 +0200
+
+multipath-tools (0.9.7-6) unstable; urgency=medium
+
+  * [85ca059] Switch Build-Depends pkg-config to pkgconf
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 29 Feb 2024 22:38:43 +0100
+
+multipath-tools (0.9.7-5) unstable; urgency=medium
+
+  * [902a13b] Rely on newly un-broken dmsetup 2:1.02.196-1
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 29 Feb 2024 22:35:59 +0100
+
+multipath-tools (0.9.7-4) unstable; urgency=medium
+
+  * [2faddfc] Fix initramfs test
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Wed, 31 Jan 2024 18:05:03 +0100
+
+multipath-tools (0.9.7-3) unstable; urgency=medium
+
+  * [b7f0988] Switch Build-Depends to systemd-dev (Closes: #1060604)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Fri, 12 Jan 2024 13:21:59 +0100
+
+multipath-tools (0.9.7-2) unstable; urgency=medium
+
+  * [018f436] Correctly apply Debian-specific udev rule priorities
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 04 Jan 2024 20:32:14 +0100
+
+multipath-tools (0.9.7-1) unstable; urgency=medium
+
+  * [232dd6e] New upstream version 0.9.7
+  * [ed5de58] Refresh patches
+  * [97e9782] Build-Depend: libmount-dev, now needed
+  * [462750d] Follow upstream change from modules-load to modprobe@ service
+  * [46cd7fe] d/rules: drop SCSI_DH_MODULES_PRELOAD which did not work anyway
+  * [5ec6ee3] autopkgtest: add extra details, journal output
+  * [11f09a7] postinst: ignore failure from udevadm
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 04 Jan 2024 00:19:37 +0100
+
+multipath-tools (0.9.4-10) unstable; urgency=medium
+
+  * [ff4b063] Fix udev rules install location
+  * [704cf13] autopkgtest: fix under upstream default of find_multipaths strict
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Mon, 01 Jan 2024 20:21:16 +0100
+
+multipath-tools (0.9.4-9) unstable; urgency=medium
+
+  * Upload to unstable.
+  * [c785707] Rearrange debian/tmp usage to get more out of dh_missng
+  * [05a2082] Use dh_install to install udev rules
+  * [6c4f974] kpartx-udeb: install udev rules and helper (Closes: #1059747)
+  * [5598a12] initramfs: use /usr-merged layout
+  * [d41422b] initramfs: use modern helpers, tidy up
+  * [bdcbd1e] Stop installing multipath-tools-boot.service mask
+  * [13d5c3e] Refresh patches
+  * [265cc4d] Apply wrap-and-sort -kast
+  * [a42a18b] Add new autopkgtest for initramfs hooks
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Mon, 01 Jan 2024 17:31:35 +0100
+
+multipath-tools (0.9.4-8) experimental; urgency=medium
+
+  * Target experimental.
+  * [dfcb2a2] Install into /usr-merged layout
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sat, 23 Dec 2023 20:20:34 +0100
+
+multipath-tools (0.9.4-7) unstable; urgency=medium
+
+  * [bdc80b9] Merge initramfs integration from Ubuntu.
+    Which apparently got updated since the 0.7.x days, compared to ours.
+    Keep kpartx in the multipath hook, as we do not have a separate kpartx-boot
+    package, and likely never will.
+  * [918d442] Remove init script, following Ubuntu bug reports
+  * [475fd45] Drop obsolete Depends: lsb-base
+  * [bc3bacb] Add NEWS for updated boot, removed sysvinit scripts
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sat, 11 Nov 2023 00:44:56 +0100
+
+multipath-tools (0.9.4-6) unstable; urgency=medium
+
+  [ Sergio Durigan Junior ]
+  * [818e429] d/p/0007-multipathd.service-remove-Also-multipathd.socket.patch:
+    Remove "Also=multipathd.socket" from multipathd.service, which was
+    breaking socket-activation.
+  * [634733b] Implement real socket activation of multipathd.service.
+    - d/rules: Use "--no-stop-on-upgrade" when installing
+      multipathd.service.
+    - d/multipath-tools.postinst: (Re)start multipathd.service
+      depending on certain conditions after installing/upgrading the
+      package.  Run "udevadm trigger" on new installations.
+    - d/multipath-tools-boot.postinst: Always enable multipathd.service
+      when multipath-tools-boot is installed.  Socket activation doesn't
+      work if booting from a multipath device.
+    Motivation: reduce RAM usage when multipath-tools is installed but
+    unused, and follow upstream setup.
+  * [6390885] d/NEWS: Add entry about socket-activation being now the default.
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Mon, 30 Oct 2023 19:08:18 +0100
+
+multipath-tools (0.9.4-5) unstable; urgency=medium
+
+  * [7578bfb] Fail package build if udev rules are missing
+  * [68c0ce2] Install udev multipath.rules again.
+    Thanks to Joshua Huber <jhuber@blockbridge.com> (Closes: #1037539)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Wed, 14 Jun 2023 11:50:10 +0200
+
+multipath-tools (0.9.4-4) unstable; urgency=medium
+
+  [ Tobias Frost ]
+  * [b3824e9] Mention CVEs in changelog as suggested in developer reference 5.1
+
+  [ Chris Lamb ]
+  * [6bb1ffa] Rebuild libdmmp docs properly during build (Closes: #1037205)
+
+  [ Chris Hofstaedtler ]
+  * [8c46661] Remove library development files and all of libdmmp.
+    There are no users of the multipath libraries outside of multipath(d)
+    itself.  Recently qemu gained support for multipath reservations; when qemu
+    wants to use this, the multipath-tools maintainers need to understand the
+    ABI status.
+    Disable building libdmmp completely, as no users seem to exist at all.
+  * [fb515b7] Remove intrusive patches for non-usrmerge-d systems.
+  * [b901229] Drop 0004-systemd-alias-multipath-service.patch,
+    symlink is installed instead.
+  * [9654134] Re-add dm-multipath module loading to ExecStartPre
+    (Closes: #1037292)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 11 Jun 2023 13:32:31 +0200
+
+multipath-tools (0.9.4-3) unstable; urgency=medium
+
+  [ Chris Lamb ]
+  * [f6f7ab0] Avoid race condition in man page build.
+    Leads to unreproducible contents. (Closes: #1030727)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Tue, 07 Feb 2023 10:16:57 +0000
+
+multipath-tools (0.9.4-2) unstable; urgency=medium
+
+  * [1517c01] Install tmpfiles.d snippet into non-usr-merged compatible location
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 02 Feb 2023 07:52:50 +0000
+
+multipath-tools (0.9.4-1) unstable; urgency=medium
+
+  * [369b812] New upstream version 0.9.4 (Closes: #1022742)
+    Fixes CVE-2022-41973 and CVE-2022-41974.
+  * [ee2206e] Refresh patches
+  * [bcb0b07] Rework build steps to follow upstream changes.
+    And install libmpathutil.so.
+  * [f8ef90a] Use upstream-supported way of disabling systemd (for udeb)
+  * [8785eef] Update lintian-overrides
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 25 Dec 2022 23:19:21 +0000
+
+multipath-tools (0.9.0-4) unstable; urgency=medium
+
+  [ Chris Lamb ]
+  * [3a71447] Make the build reproducible (Closes: #1016583)
+
+  [ Chris Hofstaedtler ]
+  * [d815e6b] Use libedit instead of libreadline.
+    Using patches from openSUSE, expected to go upstream in the next
+    release.
+    Thanks to Martin Wilck <mwilck@suse.com>, Bastian Germann <bastiangermann@fishpost.de>
+    (Closes: #979095)
+  * [f0e62a1] Add more patches from openSUSE to fix small bugs
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sat, 13 Aug 2022 13:08:06 +0000
+
+multipath-tools (0.9.0-3) unstable; urgency=medium
+
+  * [baa940a] Install reportbug helper using dh_bugfiles (Closes: #1016512)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Tue, 02 Aug 2022 08:21:25 +0000
+
+multipath-tools (0.9.0-2) unstable; urgency=medium
+
+  [ Athos Ribeiro ]
+  * [e3e7c47] d/t/kpartx-file-loopback: silence kpartx messages to stderr
+
+  [ Chris Hofstaedtler ]
+  * [057ee38] Apply wrap-and-sort -a
+  * [8c9d6fe] Use debhelper compat level 13
+  * [99f87ed] Use dh_missing
+  * [f7cde4c] Use dh_installsystemd
+  * [6797e0c] d/control: fix Depends/Pre-Depends mixup
+  * [c1cb1ba] Use debhelper sequencer (Closes: #801884)
+  * [eeb7a95] Remove upgrade code from versions before oldoldoldstable.
+    Specifically remove the debconf warning if scsi_id is still used (old
+    udev), and the init script bug fix. Rids us of all custom postinst/prerm
+    scripts.
+  * [8491532] Use only one way of installing manpages
+  * [32fb1aa] Fix typo in README.Debian
+  * [5be350e] Possibly fix multipath in d-i
+  * [c46f47a] Make initramfs scripts +x again
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sat, 30 Jul 2022 14:31:16 +0000
+
+multipath-tools (0.9.0-1) unstable; urgency=medium
+
+  * [6f546d1] New upstream version 0.9.0
+  * [8ff5696] Refresh patches
+  * [11da4e0] Follow manpages filename changes
+  * [bde7d75] Install new modules-load.d dropin file
+  * [1ac2df6] Avoid setting EXTRAVERSION
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Fri, 29 Jul 2022 22:02:31 +0000
+
+multipath-tools (0.8.8-1) unstable; urgency=medium
+
+  [ Utkarsh Gupta ]
+  * [74952ce] d/t/kpartx-file-loopback: silence gdisk warnings on stderr
+  * [a3ad859] d/t/tgtbasedmpaths: Use stable wwn-* names in autopkgtest
+  * [7a22711] d/t/tgtbasedmpaths: Add sleep to allow for device creation
+
+  [ Ritesh Raj Sarraf ]
+  * [9169942] Add some documentation about LVM + DM-Multipath setup.
+    Thanks to Carlos Barros (Closes: 1001710)
+
+  [ Chris Hofstaedtler ]
+  * [7fcb8ba] New upstream version 0.8.8
+  * [e63a379] Refresh patches
+  * [4ab9ce2] Drop old dmsetup_env hack
+    dmsetup long supports DM_NAME and DM_UUID, and the other variables
+    are not used anymore.
+  * [2cd669e] Avoid installing libmpathvalid.so until users appear
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 16 Jan 2022 22:57:28 +0000
 
 multipath-tools (0.8.5-2) unstable; urgency=medium
 

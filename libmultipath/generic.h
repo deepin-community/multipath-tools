@@ -18,6 +18,15 @@
 #define _GENERIC_H
 #include "vector.h"
 
+/*
+ * fieldwidth_t is required in print.h and foreign.h.
+ * Defining it twice is not allowed before C11.
+ * So do it here.
+ */
+typedef unsigned char fieldwidth_t;
+#define MAX_FIELD_WIDTH UCHAR_MAX
+
+struct strbuf;
 struct gen_multipath;
 struct gen_pathgroup;
 struct gen_path;
@@ -50,26 +59,24 @@ struct gen_multipath_ops {
 	 * 0-terminated, no more than "len" characters including trailing '\0'.
 	 *
 	 * @param gmp: generic multipath object to act on
-	 * @param buf: output buffer
-	 * @param buflen: buffer size
+	 * @param buf: output struct strbuf
 	 * @param wildcard: the multipath wildcard (see print.c)
 	 * @returns the number of characters printed (without trailing '\0').
 	 */
 	int (*snprint)(const struct gen_multipath*,
-		       char *buf, int len, char wildcard);
+		       struct strbuf *buf, char wildcard);
 	/**
 	 * method: style(gmp, buf, len, verbosity)
 	 * returns the format string to be used for the multipath object,
 	 * defined with the wildcards as defined in print.c
 	 * generic_style() should work well in most cases.
 	 * @param gmp: generic multipath object to act on
-	 * @param buf: output buffer
-	 * @param buflen: buffer size
+	 * @param buf: output strbuf
 	 * @param verbosity: verbosity level
 	 * @returns number of format chars printed
 	 */
 	int (*style)(const struct gen_multipath*,
-		     char *buf, int len, int verbosity);
+		     struct strbuf *buf, int verbosity);
 };
 
 /**
@@ -95,7 +102,7 @@ struct gen_pathgroup_ops {
 	 * see gen_multipath_ops->snprint() above
 	 */
 	int (*snprint)(const struct gen_pathgroup*,
-		       char *buf, int len, char wildcard);
+		       struct strbuf *buf, char wildcard);
 };
 
 struct gen_path_ops {
@@ -104,7 +111,7 @@ struct gen_path_ops {
 	 * see gen_multipath_ops->snprint() above
 	 */
 	int (*snprint)(const struct gen_path*,
-		       char *buf, int len, char wildcard);
+		       struct strbuf *buf, char wildcard);
 };
 
 struct gen_multipath {
@@ -129,6 +136,6 @@ struct gen_path {
  * foreign libraries.
  */
 int generic_style(const struct gen_multipath*,
-		  char *buf, int len, int verbosity);
+		  struct strbuf *buf, int verbosity);
 
 #endif /* _GENERIC_H */

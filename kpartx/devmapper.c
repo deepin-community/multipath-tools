@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <sys/sysmacros.h>
+#include "autoconfig.h"
 #include "devmapper.h"
 #include "kpartx.h"
 
@@ -17,6 +18,12 @@
 #define _UUID_PREFIX_LEN (sizeof(_UUID_PREFIX) - 1)
 #define MAX_PREFIX_LEN (_UUID_PREFIX_LEN + 4)
 #define PARAMS_SIZE 1024
+
+#ifdef LIBDM_API_COOKIE
+#    define __DM_API_COOKIE_UNUSED__ /* empty */
+#else
+#    define __DM_API_COOKIE_UNUSED__ __attribute__((unused))
+#endif
 
 int dm_prereq(char * str, uint32_t x, uint32_t y, uint32_t z)
 {
@@ -55,12 +62,12 @@ out:
 	return r;
 }
 
-int dm_simplecmd(int task, const char *name, int no_flush, uint16_t udev_flags)
+int dm_simplecmd(int task, const char *name, int no_flush, __DM_API_COOKIE_UNUSED__ uint16_t udev_flags)
 {
 	int r = 0;
+#ifdef LIBDM_API_COOKIE
 	int udev_wait_flag = (task == DM_DEVICE_RESUME ||
 			      task == DM_DEVICE_REMOVE);
-#ifdef LIBDM_API_COOKIE
 	uint32_t cookie = 0;
 #endif
 	struct dm_task *dmt;
@@ -406,8 +413,10 @@ dm_get_map(const char *mapname, char * outparams)
 		goto out;
 
 	/* Fetch 1st target */
-	dm_get_next_target(dmt, NULL, &start, &length,
-			   &target_type, &params);
+	if (dm_get_next_target(dmt, NULL, &start, &length,
+			       &target_type, &params) != NULL || !params)
+		/* more than one target or not found target */
+		goto out;
 
 	if (snprintf(outparams, PARAMS_SIZE, "%s", params) <= PARAMS_SIZE)
 		r = 0;

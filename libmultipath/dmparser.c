@@ -10,11 +10,11 @@
 
 #include "checkers.h"
 #include "vector.h"
-#include "memory.h"
 #include "structs.h"
 #include "util.h"
 #include "debug.h"
 #include "dmparser.h"
+#include "strbuf.h"
 
 #define WORD_SIZE 64
 
@@ -26,7 +26,7 @@ merge_words(char **dst, const char *word)
 
 	dstlen = strlen(*dst);
 	len = dstlen + strlen(word) + 2;
-	*dst = REALLOC(*dst, len);
+	*dst = realloc(*dst, len);
 
 	if (!*dst) {
 		free(p);
@@ -41,60 +41,52 @@ merge_words(char **dst, const char *word)
 	return 0;
 }
 
-#define APPEND(p, end, args...)						\
-({									\
-	int ret;							\
-									\
-	ret = snprintf(p, end - p, ##args);				\
-	if (ret < 0) {							\
-		condlog(0, "%s: conversion error", mp->alias);		\
-		goto err;						\
-	}								\
-	p += ret;							\
-	if (p >= end) {							\
-		condlog(0, "%s: params too small", mp->alias);		\
-		goto err;						\
-	}								\
-})
-
 /*
  * Transforms the path group vector into a proper device map string
  */
-int
-assemble_map (struct multipath * mp, char * params, int len)
+int assemble_map(struct multipath *mp, char **params)
 {
+	static const char no_path_retry[] = "queue_if_no_path";
+	static const char retain_hwhandler[] = "retain_attached_hw_handler";
 	int i, j;
 	int minio;
 	int nr_priority_groups, initial_pg_nr;
-	char * p;
-	const char *const end = params + len;
-	char no_path_retry[] = "queue_if_no_path";
-	char retain_hwhandler[] = "retain_attached_hw_handler";
+	STRBUF_ON_STACK(buff);
 	struct pathgroup * pgp;
 	struct path * pp;
 
 	minio = mp->minio;
-	p = params;
 
 	nr_priority_groups = VECTOR_SIZE(mp->pg);
 	initial_pg_nr = (nr_priority_groups ? mp->bestpg : 0);
 
-	if (mp->no_path_retry != NO_PATH_RETRY_UNDEF  &&
-	    mp->no_path_retry != NO_PATH_RETRY_FAIL) {
+	switch (mp->no_path_retry) {
+	case NO_PATH_RETRY_UNDEF:
+	case NO_PATH_RETRY_FAIL:
+		break;
+	default:
+		/* don't enable queueing if no_path_retry has timed out */
+		if (mp->in_recovery && mp->retry_tick == 0 &&
+		    count_active_paths(mp) == 0)
+			break;
+		/* fallthrough */
+	case NO_PATH_RETRY_QUEUE:
 		add_feature(&mp->features, no_path_retry);
+		break;
 	}
 	if (mp->retain_hwhandler == RETAIN_HWHANDLER_ON &&
 	    get_linux_version_code() < KERNEL_VERSION(4, 3, 0))
 		add_feature(&mp->features, retain_hwhandler);
 
-	/* mp->features must not be NULL */
-	APPEND(p, end, "%s %s %i %i", mp->features, mp->hwhandler,
-		nr_priority_groups, initial_pg_nr);
+	if (print_strbuf(&buff, "%s %s %i %i", mp->features, mp->hwhandler,
+			 nr_priority_groups, initial_pg_nr) < 0)
+		goto err;
 
 	vector_foreach_slot (mp->pg, pgp, i) {
 		pgp = VECTOR_SLOT(mp->pg, i);
-		APPEND(p, end, " %s %i 1", mp->selector,
-		       VECTOR_SIZE(pgp->paths));
+		if (print_strbuf(&buff, " %s %i 1", mp->selector,
+				 VECTOR_SIZE(pgp->paths)) < 0)
+			goto err;
 
 		vector_foreach_slot (pgp->paths, pp, j) {
 			int tmp_minio = minio;
@@ -106,21 +98,21 @@ assemble_map (struct multipath * mp, char * params, int len)
 				condlog(0, "dev_t not set for '%s'", pp->dev);
 				goto err;
 			}
-			APPEND(p, end, " %s %d", pp->dev_t, tmp_minio);
+			if (print_strbuf(&buff, " %s %d", pp->dev_t, tmp_minio) < 0)
+				goto err;
 		}
 	}
 
-	condlog(4, "%s: assembled map [%s]", mp->alias, params);
+	*params = steal_strbuf_str(&buff);
+	condlog(4, "%s: assembled map [%s]", mp->alias, *params);
 	return 0;
 
 err:
 	return 1;
 }
 
-#undef APPEND
-
 /*
- * Caution callers: If this function encounters yet unkown path devices, it
+ * Caution callers: If this function encounters yet unknown path devices, it
  * adds them uninitialized to the mpp.
  * Call update_pathvec_from_dm() after this function to make sure
  * all data structures are in a sane state.
@@ -163,12 +155,14 @@ int disassemble_map(const struct _vector *pathvec,
 			return 1;
 
 		if (merge_words(&mpp->features, word)) {
-			FREE(word);
+			free(word);
 			return 1;
 		}
 
-		FREE(word);
+		free(word);
 	}
+	mpp->queue_mode = strstr(mpp->features, "queue_mode bio") ?
+			  QUEUE_MODE_BIO : QUEUE_MODE_RQ;
 
 	/*
 	 * hwhandler
@@ -187,10 +181,10 @@ int disassemble_map(const struct _vector *pathvec,
 			return 1;
 
 		if (merge_words(&mpp->hwhandler, word)) {
-			FREE(word);
+			free(word);
 			return 1;
 		}
-		FREE(word);
+		free(word);
 	}
 
 	/*
@@ -202,7 +196,7 @@ int disassemble_map(const struct _vector *pathvec,
 		return 1;
 
 	num_pg = atoi(word);
-	FREE(word);
+	free(word);
 
 	if (num_pg > 0) {
 		if (!mpp->pg) {
@@ -224,7 +218,7 @@ int disassemble_map(const struct _vector *pathvec,
 		goto out;
 
 	mpp->nextpg = atoi(word);
-	FREE(word);
+	free(word);
 
 	for (i = 0; i < num_pg; i++) {
 		/*
@@ -249,7 +243,7 @@ int disassemble_map(const struct _vector *pathvec,
 
 			if (merge_words(&mpp->selector, word))
 				goto out1;
-			FREE(word);
+			free(word);
 		} else {
 			p += get_word(p, NULL);
 			p += get_word(p, NULL);
@@ -277,7 +271,7 @@ int disassemble_map(const struct _vector *pathvec,
 			goto out;
 
 		num_paths = atoi(word);
-		FREE(word);
+		free(word);
 
 		p += get_word(p, &word);
 
@@ -285,7 +279,7 @@ int disassemble_map(const struct _vector *pathvec,
 			goto out;
 
 		num_paths_args = atoi(word);
-		FREE(word);
+		free(word);
 
 		for (j = 0; j < num_paths; j++) {
 			pp = NULL;
@@ -311,7 +305,7 @@ int disassemble_map(const struct _vector *pathvec,
 			} else if (store_path(pgp->paths, pp))
 				goto out1;
 
-			FREE(word);
+			free(word);
 
 			pgp->id ^= (long)pp;
 			pp->pgindex = i + 1;
@@ -320,7 +314,7 @@ int disassemble_map(const struct _vector *pathvec,
 				if (k == 0) {
 					p += get_word(p, &word);
 					def_minio = atoi(word);
-					FREE(word);
+					free(word);
 
 					if (!strncmp(mpp->selector,
 						     "round-robin", 11)) {
@@ -341,7 +335,7 @@ int disassemble_map(const struct _vector *pathvec,
 	}
 	return 0;
 out1:
-	FREE(word);
+	free(word);
 out:
 	free_pgvec(mpp->pg, KEEP_PATHS);
 	mpp->pg = NULL;
@@ -375,7 +369,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 		return 1;
 
 	num_feature_args = atoi(word);
-	FREE(word);
+	free(word);
 
 	for (i = 0; i < num_feature_args; i++) {
 		if (i == 1) {
@@ -385,7 +379,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 				return 1;
 
 			mpp->queuedio = atoi(word);
-			FREE(word);
+			free(word);
 			continue;
 		}
 		/* unknown */
@@ -400,7 +394,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 		return 1;
 
 	num_hwhandler_args = atoi(word);
-	FREE(word);
+	free(word);
 
 	for (i = 0; i < num_hwhandler_args; i++)
 		p += get_word(p, NULL);
@@ -414,7 +408,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 		return 1;
 
 	num_pg = atoi(word);
-	FREE(word);
+	free(word);
 
 	if (num_pg == 0)
 		return 0;
@@ -451,12 +445,22 @@ int disassemble_status(const char *params, struct multipath *mpp)
 			pgp->status = PGSTATE_UNDEF;
 			break;
 		}
-		FREE(word);
+		free(word);
 
 		/*
-		 * PG Status (discarded, would be '0' anyway)
+		 * Path Selector Group Arguments
 		 */
-		p += get_word(p, NULL);
+		p += get_word(p, &word);
+
+		if (!word)
+			return 1;
+
+		num_pg_args = atoi(word);
+		free(word);
+
+		/* Ignore ps group arguments */
+		for (j = 0; j < num_pg_args; j++)
+			p += get_word(p, NULL);
 
 		p += get_word(p, &word);
 
@@ -464,7 +468,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 			return 1;
 
 		num_paths = atoi(word);
-		FREE(word);
+		free(word);
 
 		p += get_word(p, &word);
 
@@ -472,7 +476,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 			return 1;
 
 		num_pg_args = atoi(word);
-		FREE(word);
+		free(word);
 
 		if (VECTOR_SIZE(pgp->paths) < num_paths)
 			return 1;
@@ -502,7 +506,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 			default:
 				break;
 			}
-			FREE(word);
+			free(word);
 			/*
 			 * fail count
 			 */
@@ -512,7 +516,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 				return 1;
 
 			pp->failcount = atoi(word);
-			FREE(word);
+			free(word);
 
 			/*
 			 * selector args
@@ -525,7 +529,7 @@ int disassemble_status(const char *params, struct multipath *mpp)
 						   &def_minio) == 1 &&
 					    def_minio != mpp->minio)
 							mpp->minio = def_minio;
-					FREE(word);
+					free(word);
 				} else
 					p += get_word(p, NULL);
 			}

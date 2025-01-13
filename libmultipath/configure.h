@@ -18,9 +18,11 @@ enum actions {
 	ACT_RENAME,
 	ACT_CREATE,
 	ACT_RESIZE,
-	ACT_FORCERENAME,
+	ACT_RELOAD_RENAME,
 	ACT_DRY_RUN,
 	ACT_IMPOSSIBLE,
+	ACT_RESIZE_RENAME,
+	ACT_SWITCHPG_RENAME,
 };
 
 /*
@@ -47,8 +49,7 @@ enum {
 
 struct vectors;
 
-int setup_map (struct multipath * mpp, char * params, int params_size,
-	       struct vectors *vecs );
+int setup_map (struct multipath * mpp, char **params, struct vectors *vecs);
 void select_action (struct multipath *mpp, const struct _vector *curmp,
 		    int force_reload);
 int domap (struct multipath * mpp, char * params, int is_daemon);
@@ -57,4 +58,8 @@ int coalesce_paths (struct vectors *vecs, vector curmp, char * refwwid, int forc
 int get_refwwid (enum mpath_cmds cmd, const char *dev, enum devtypes dev_type,
 		 vector pathvec, char **wwid);
 struct udev_device *get_udev_device(const char *dev, enum devtypes dev_type);
+void trigger_path_udev_change(struct path *pp, bool is_mpath);
 void trigger_paths_udev_change(struct multipath *mpp, bool is_mpath);
+void trigger_partitions_udev_change(struct udev_device *dev, const char *action,
+				    int len);
+int check_daemon(void);

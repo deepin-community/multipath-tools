@@ -10,6 +10,7 @@
 #include <getopt.h>
 #include <libudev.h>
 #include "mpath_persist.h"
+#include "mpath_persist_int.h"
 #include "main.h"
 #include "debug.h"
 #include <pthread.h>
@@ -42,24 +43,10 @@ void * mpath_alloc_prin_response(int prin_sa);
 void mpath_print_transport_id(struct prin_fulldescr *fdesc);
 int construct_transportid(const char * inp, struct transportid transid[], int num_transportids);
 
-int logsink;
-struct config *multipath_conf;
-
-struct config *get_multipath_config(void)
-{
-	return multipath_conf;
-}
-
-void put_multipath_config(__attribute__((unused)) void * arg)
-{
-	/* Noop for now */
-}
-
 void rcu_register_thread_memb(void) {}
 
 void rcu_unregister_thread_memb(void) {}
 
-struct udev *udev;
 
 static int verbose, loglevel, noisy;
 
@@ -191,7 +178,6 @@ static int handle_args(int argc, char * argv[], int nline)
 	const char *device_name = NULL;
 	int num_prin_sa = 0;
 	int num_prout_sa = 0;
-	int num_prout_param = 0;
 	int prin_flag = 0;
 	int prout_flag = 0;
 	int ret = 0;
@@ -276,11 +262,9 @@ static int handle_args(int argc, char * argv[], int nline)
 
 			case 'Y':
 				param_alltgpt = 1;
-				++num_prout_param;
 				break;
 			case 'Z':
 				param_aptpl = 1;
-				++num_prout_param;
 				break;
 			case 'K':
 				if (1 != sscanf (optarg, "%" SCNx64 "", &param_rk))
@@ -289,7 +273,6 @@ static int handle_args(int argc, char * argv[], int nline)
 					ret = MPATH_PR_SYNTAX_ERROR;
 					goto out;
 				}
-				++num_prout_param;
 				break;
 
 			case 'S':
@@ -299,7 +282,6 @@ static int handle_args(int argc, char * argv[], int nline)
 					ret = MPATH_PR_SYNTAX_ERROR;
 					goto out;
 				}
-				++num_prout_param;
 				break;
 
 			case 'P':
@@ -319,7 +301,6 @@ static int handle_args(int argc, char * argv[], int nline)
 					ret = MPATH_PR_SYNTAX_ERROR;
 					goto out;
 				}
-				++num_prout_param;
 				break;
 
 			case 's':
@@ -493,7 +474,7 @@ static int handle_args(int argc, char * argv[], int nline)
 	}
 	if ((verbose > 2) && num_transportids)
 	{
-		fprintf (stderr, "number of tranport-ids decoded from "
+		fprintf (stderr, "number of transport-ids decoded from "
 				"command line : %d\n", num_transportids);
 	}
 
@@ -652,18 +633,13 @@ int main(int argc, char *argv[])
 		exit (1);
 	}
 
-	udev = udev_new();
-	multipath_conf = mpath_lib_init();
-	if(!multipath_conf) {
-		udev_unref(udev);
+	if (libmpathpersist_init()) {
 		exit(1);
 	}
+	if (atexit((void(*)(void))libmpathpersist_exit))
+		fprintf(stderr, "failed to register cleanup handler for libmpathpersist: %m");
 
 	ret = handle_args(argc, argv, 0);
-
-	mpath_lib_exit(multipath_conf);
-	udev_unref(udev);
-
 	return (ret >= 0) ? ret : MPATH_PR_OTHER;
 }
 

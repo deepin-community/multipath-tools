@@ -22,6 +22,9 @@
 #include "globals.c"
 #include "blacklist.h"
 #include "test-log.h"
+#include "debug.h"
+
+#include "../libmultipath/blacklist.c"
 
 struct udev_device {
 	const char *sysname;
@@ -152,6 +155,7 @@ static int setup(void **state)
 	    store_ble(blist_property_wwn_inv, "!ID_WWN", ORIGIN_CONFIG))
 		return -1;
 
+	init_test_verbosity(4);
 	return 0;
 }
 
@@ -222,8 +226,15 @@ static void test_devnode_default(void **state)
 {
 	assert_int_equal(filter_devnode(blist_devnode_default, NULL, "sdaa"),
 			 MATCH_NOTHING);
-	assert_int_equal(filter_devnode(blist_devnode_default, NULL, "nvme0n1"),
-			 MATCH_NOTHING);
+	if (nvme_multipath_enabled()) {
+		expect_condlog(3, "nvme0n1: device node name blacklisted\n");
+		assert_int_equal(filter_devnode(blist_devnode_default, NULL,
+						"nvme0n1"),
+				 MATCH_DEVNODE_BLIST);
+	} else
+		assert_int_equal(filter_devnode(blist_devnode_default, NULL,
+						"nvme0n1"),
+				 MATCH_NOTHING);
 	assert_int_equal(filter_devnode(blist_devnode_default, NULL, "dasda"),
 			 MATCH_NOTHING);
 	expect_condlog(3, "hda: device node name blacklisted\n");

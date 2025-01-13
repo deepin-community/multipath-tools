@@ -1,0 +1,32 @@
+#!/bin/bash
+
+set -ex -o pipefail
+
+find_file() {
+    echo "checking for file $1 in initramfs"
+    FILES=$(find initramfs -name "$1")
+    if [ -z "$FILES" ]; then
+        echo "not found"
+        exit 1
+    fi
+}
+
+update-initramfs -kall -u
+INITRDS=(/boot/initrd.img-*)
+
+unmkinitramfs "${INITRDS[0]}" initramfs/
+find initramfs/
+
+echo "check our modules are installed in initramfs"
+find_file 'dm-multipath.ko*'
+find_file 'scsi_dh_alua.ko*'
+
+echo "check our rules are installed in initramfs"
+find_file '*-dm-mpath.rules'
+find_file '*-multipath.rules'
+find_file '*-dm-parts.rules'
+find_file '*-del-part-nodes.rules'
+find_file '*-kpartx.rules'
+
+echo "check multipath binary is executable"
+chroot initramfs /usr/sbin/multipath -h
